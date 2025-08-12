@@ -1,0 +1,10 @@
+name = "evx-cpr-qr-redirect"
+main = "src/worker.ts"
+compatibility_date = "2025-08-01"
+
+routes = [
+  { pattern = "cpr.evx.tech/public/cs/*", zone_name = "evx.tech" }
+]
+
+[vars]
+COUNTRY_CODE = "AU"

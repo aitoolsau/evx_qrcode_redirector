@@ -1,0 +1,4 @@
+# .htaccess for Apache rewrite (Laravel/vanilla PHP style)
+RewriteEngine On
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteRule ^ index.php [QSA,L]
