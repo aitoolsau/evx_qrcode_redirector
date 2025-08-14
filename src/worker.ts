@@ -51,7 +51,8 @@ function adminPage(): string {
   <style>
     body{background:#f0f0f1;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:0;padding:0}
     #login{width:320px;margin:6% auto 2rem;padding:0}
-    .logo{text-align:center;margin-bottom:1rem;font-weight:600;color:#1d2327}
+  .logo{text-align:center;margin-bottom:1rem}
+  .logo img{max-width:180px;height:auto}
     .login-card{background:#fff;border:1px solid #c3c4c7;box-shadow:0 1px 3px rgba(0,0,0,.04);padding:26px}
     .login-card h1{font-size:1.1rem;margin:.2rem 0 1rem 0;color:#1d2327}
     label{display:block;margin:8px 0 4px;color:#1d2327;font-size:13px}
@@ -69,7 +70,7 @@ function adminPage(): string {
 </head>
 <body>
   <div id="login">
-    <div class="logo">EVX</div>
+    <div class="logo"><img src="https://evx.tech/wp-content/uploads/2022/05/EVX-Logo-1.png" alt="EVX logo" /></div>
     <div class="login-card">
       <h1>Log In</h1>
       <form id="login-form">
