@@ -57,6 +57,8 @@ function adminPage(): string {
     .login-card h1{font-size:1.1rem;margin:.2rem 0 1rem 0;color:#1d2327}
     label{display:block;margin:8px 0 4px;color:#1d2327;font-size:13px}
     input{width:100%;padding:8px;border:1px solid #8c8f94;border-radius:3px;background:#fff}
+  /* Add a slight extra right margin on login inputs to balance spacing */
+  #login input{margin-right:8px;width:calc(100% - 8px)}
     .button-primary{background:#2271b1;border-color:#2271b1;color:#fff;text-decoration:none;text-shadow:none;padding:8px 14px;border-radius:3px;border:1px solid transparent;cursor:pointer;display:inline-block;margin-top:12px}
     .button-primary:hover{background:#135e96}
     .msg{margin-top:8px;font-size:12px;color:#646970}
