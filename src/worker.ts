@@ -221,7 +221,7 @@ function adminPage(): string {
       const r = await fetch(path, Object.assign({credentials:'include'}, opts||{}));
       const ct = r.headers.get('content-type')||'';
       const body = ct.includes('application/json')? await r.json(): await r.text();
-      if(!r.ok) throw new Error((body && body.error) || r.statusText);
+  if(!r.ok) throw new Error((body && (body.message || body.error)) || r.statusText);
       return body;
     }
     function getParam(name){ const u=new URL(window.location.href); return u.searchParams.get(name); }
@@ -452,20 +452,26 @@ export default {
       }
     }
     if (url.pathname === "/api/password" && request.method === "POST") {
-      if (!(await requireAuth(request, env))) return unauthorized();
-      const body = await request.json().catch(()=>({}));
-      const current = String((body as any).current || '');
-      const next = String((body as any).next || '');
-      if (next.length < 8) return okJson({ error: 'weak_password' }, { status: 400 });
-      const ok = await verifyPassword(current, env);
-      if (!ok) return okJson({ error: 'bad_current' }, { status: 403 });
-  const salt = new Uint8Array(16); crypto.getRandomValues(salt);
-  const hash = await pbkdf2Hash(next, salt, 150_000);
-  const rec = { iterations: 150000, salt: bytesToB64url(salt), hash: bytesToB64url(hash), updatedAt: new Date().toISOString() };
-  await env.MAPPINGS.put('CONFIG:ADMIN_PW', JSON.stringify(rec));
-  await bumpSessionVersion(env); // force re-login everywhere
-  const after = await env.MAPPINGS.get('CONFIG:ADMIN_PW');
-      return okJson({ ok: true, visible: Boolean(after) });
+      try {
+        if (!(await requireAuth(request, env))) return unauthorized();
+        const body = await request.json().catch(()=>({}));
+        const current = String((body as any).current || '');
+        const next = String((body as any).next || '');
+        if (next.length < 8) return okJson({ error: 'weak_password' }, { status: 400 });
+        const ok = await verifyPassword(current, env);
+        if (!ok) return okJson({ error: 'bad_current' }, { status: 403 });
+        const salt = new Uint8Array(16); crypto.getRandomValues(salt);
+        const iterations = 100_000;
+        const hash = await pbkdf2Hash(next, salt, iterations);
+        const rec = { iterations, salt: bytesToB64url(salt), hash: bytesToB64url(hash), updatedAt: new Date().toISOString() };
+        await env.MAPPINGS.put('CONFIG:ADMIN_PW', JSON.stringify(rec));
+        await bumpSessionVersion(env); // force re-login everywhere
+        const after = await env.MAPPINGS.get('CONFIG:ADMIN_PW');
+        return okJson({ ok: true, visible: Boolean(after) });
+      } catch (e: any) {
+        const msg = e && (e.message || String(e));
+        return okJson({ error: 'internal_error', message: msg }, { status: 500 });
+      }
     }
     if (url.pathname === "/api/logout" && request.method === "POST") {
       const cookie = request.headers.get("cookie") || "";
