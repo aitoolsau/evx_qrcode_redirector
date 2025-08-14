@@ -169,9 +169,9 @@ function adminPage(): string {
                        '</td>';
         tbody.appendChild(tr);
       }
-      // Single persistent click handler each time loadList is called
+      // Single persistent click handler each time loadList is called (plain JS)
       tbody.onclick = async (e)=>{
-        const t = e.target as HTMLElement;
+        const t = e.target;
         if(t && t.tagName === 'BUTTON'){
           const action = t.getAttribute('data-action');
           const k = t.getAttribute('data-k');
