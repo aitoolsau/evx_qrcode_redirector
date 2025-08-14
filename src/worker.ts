@@ -66,6 +66,42 @@ async function hmacVerify(secret: string, data: string, sig: string): Promise<bo
   const expected = await hmacSign(secret, data);
   return expected === sig; // acceptable here
 }
+
+// Password hashing (PBKDF2-SHA256) stored in KV under CONFIG:ADMIN_PW
+async function pbkdf2Hash(password: string, salt: any, iterations = 100_000): Promise<Uint8Array> {
+  const keyMaterial = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations }, keyMaterial, 256);
+  return new Uint8Array(bits);
+}
+function bytesToB64url(bytes: Uint8Array): string {
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+function b64urlToBytes(b: string): Uint8Array {
+  const base = b.replace(/-/g, '+').replace(/_/g, '/');
+  const pad = base + '==='.slice((base.length + 3) % 4);
+  const bin = atob(pad);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+async function verifyPassword(pass: string, env: Env): Promise<boolean> {
+  const rec = await env.MAPPINGS.get('CONFIG:ADMIN_PW');
+  if (rec) {
+    try {
+      const cfg = JSON.parse(rec);
+      const salt = b64urlToBytes(String(cfg.salt || ''));
+      const it = Number(cfg.iterations || 100_000);
+  const expect = String(cfg.hash || '');
+  const got = await pbkdf2Hash(pass, salt, it);
+      return bytesToB64url(got) === expect;
+    } catch {
+      // fall back to env compare if parse fails
+    }
+  }
+  return (env.ADMIN_PASSWORD || '') === pass;
+}
 async function requireAuth(request: Request, env: Env): Promise<boolean> {
   const cookie = request.headers.get('cookie') || '';
   const m = cookie.match(/(?:^|;\s*)admin_session=([^;]+)/);
@@ -151,6 +187,18 @@ function adminPage(): string {
       <div class="row"><input id="prefix" placeholder="Filter by prefix (optional)" /><button id="refresh" class="button-primary" type="button">Refresh</button></div>
   <table id="list"><thead><tr><th>Key</th><th>Value</th><th style="width:160px">Actions</th></tr></thead><tbody></tbody></table>
     </section>
+
+    <section class="card">
+      <h2>Change Admin Password</h2>
+      <form id="pwform">
+        <div class="row"><label for="pw_current">Current Password</label><input id="pw_current" type="password" autocomplete="current-password" required /></div>
+        <div class="row"><label for="pw_new">New Password</label><input id="pw_new" type="password" autocomplete="new-password" required /></div>
+        <div class="row"><label for="pw_confirm">Confirm New Password</label><input id="pw_confirm" type="password" autocomplete="new-password" required /></div>
+        <button class="button-primary" type="submit">Update Password</button>
+        <div id="pw-msg" class="msg"></div>
+      </form>
+      <div class="msg">Note: Password changes take effect immediately. Your current session remains valid.</div>
+    </section>
   </div>
 
   <script>
@@ -201,6 +249,23 @@ function adminPage(): string {
         (document.getElementById('cid')).value = '';
         (document.getElementById('url')).value = '';
         document.getElementById('save-btn').textContent = 'Add Mapping';
+      } catch(err){ msg.textContent = err.message; msg.className='msg err'; }
+    });
+
+    document.getElementById('pwform').addEventListener('submit', async (e)=>{
+      e.preventDefault();
+      const cur = (document.getElementById('pw_current')).value;
+      const nn = (document.getElementById('pw_new')).value;
+      const cf = (document.getElementById('pw_confirm')).value;
+      const msg = document.getElementById('pw-msg'); msg.textContent=''; msg.className='msg';
+      if(nn !== cf){ msg.textContent = 'New passwords do not match'; msg.className='msg err'; return; }
+      if(nn.length < 8){ msg.textContent = 'Password must be at least 8 characters'; msg.className='msg err'; return; }
+      try {
+        await api('/api/password', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ current: cur, next: nn }) });
+        msg.textContent = 'Password updated'; msg.className='msg ok';
+        (document.getElementById('pw_current')).value='';
+        (document.getElementById('pw_new')).value='';
+        (document.getElementById('pw_confirm')).value='';
       } catch(err){ msg.textContent = err.message; msg.className='msg err'; }
     });
     async function loadList(){
@@ -274,14 +339,14 @@ export default {
         user = String((body as any).user || '');
         pass = String((body as any).pass || '');
       }
-      const uOk = (env.ADMIN_USERNAME || 'admin') === user;
-      const pOk = (env.ADMIN_PASSWORD || '') === pass;
+  const uOk = (env.ADMIN_USERNAME || 'admin') === user;
+  const pOk = await verifyPassword(pass, env);
       if (!uOk || !pOk) return html('<script>location.href="/admin?login=failed"</script>', { status: 401 });
       const iat = Math.floor(Date.now()/1000);
       const exp = iat + 3600;
       const payload = { u: user, iat, exp };
       const payloadB64 = b64urlFromString(JSON.stringify(payload));
-      const sig = await hmacSign((env as any).SESSION_SECRET || env.ADMIN_PASSWORD || '', payloadB64);
+  const sig = await hmacSign((env as any).SESSION_SECRET || env.ADMIN_PASSWORD || '', payloadB64);
       const token = `${payloadB64}.${sig}`;
       const headers = new Headers({ "Set-Cookie": `admin_session=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=3600` });
       const rd = url.searchParams.get('redirect_to') || '/admin';
@@ -314,8 +379,8 @@ export default {
         const body = await request.json();
         const user = String((body as any).user || "");
         const pass = String((body as any).pass || "");
-        const uOk = (env.ADMIN_USERNAME || "admin") === String(user || "");
-        const pOk = (env.ADMIN_PASSWORD || "") === String(pass || "");
+  const uOk = (env.ADMIN_USERNAME || "admin") === String(user || "");
+  const pOk = await verifyPassword(String(pass || ""), env);
         if (!uOk || !pOk) return unauthorized();
   const iat = Math.floor(Date.now()/1000);
   const exp = iat + 3600;
@@ -328,6 +393,20 @@ export default {
       } catch {
         return okJson({ error: "bad_request" }, { status: 400 });
       }
+    }
+    if (url.pathname === "/api/password" && request.method === "POST") {
+      if (!(await requireAuth(request, env))) return unauthorized();
+      const body = await request.json().catch(()=>({}));
+      const current = String((body as any).current || '');
+      const next = String((body as any).next || '');
+      if (next.length < 8) return okJson({ error: 'weak_password' }, { status: 400 });
+      const ok = await verifyPassword(current, env);
+      if (!ok) return okJson({ error: 'bad_current' }, { status: 403 });
+  const salt = new Uint8Array(16); crypto.getRandomValues(salt);
+  const hash = await pbkdf2Hash(next, salt, 150_000);
+      const rec = { iterations: 150000, salt: bytesToB64url(salt), hash: bytesToB64url(hash), updatedAt: new Date().toISOString() };
+      await env.MAPPINGS.put('CONFIG:ADMIN_PW', JSON.stringify(rec));
+      return okJson({ ok: true });
     }
     if (url.pathname === "/api/logout" && request.method === "POST") {
       const cookie = request.headers.get("cookie") || "";
