@@ -93,13 +93,16 @@ function adminPage(): string {
       <form id="upsert">
         <div class="row"><label for="cid">Charger ID</label><input id="cid" placeholder="20501B" required /></div>
         <div class="row"><label for="url">Target URL</label><input id="url" placeholder="https://cp.evx.tech/public/cs/qr?evseid=AU*EVX*20501B" required /></div>
-        <button class="button-primary" type="submit">Save Mapping</button>
+        <div class="row">
+          <button id="save-btn" class="button-primary" type="submit">Save Mapping</button>
+          <button id="clear-btn" type="button">Clear</button>
+        </div>
         <div id="save-msg" class="msg"></div>
       </form>
     </section>
     <section class="card">
       <div class="row"><input id="prefix" placeholder="Filter by prefix (optional)" /><button id="refresh" class="button-primary" type="button">Refresh</button></div>
-      <table id="list"><thead><tr><th>Key</th><th>Value</th><th></th></tr></thead><tbody></tbody></table>
+  <table id="list"><thead><tr><th>Key</th><th>Value</th><th style="width:160px">Actions</th></tr></thead><tbody></tbody></table>
     </section>
   </div>
 
@@ -134,6 +137,13 @@ function adminPage(): string {
     });
     document.getElementById('logout').addEventListener('click', async ()=>{ await api('/api/logout', {method:'POST'}); window.location.href = '/admin'; });
     document.getElementById('refresh').addEventListener('click', loadList);
+    document.getElementById('clear-btn').addEventListener('click', ()=>{
+      (document.getElementById('cid')).value = '';
+      (document.getElementById('url')).value = '';
+      document.getElementById('save-btn').textContent = 'Save Mapping';
+      document.getElementById('save-msg').textContent = '';
+      document.getElementById('cid').focus();
+    });
     document.getElementById('upsert').addEventListener('submit', async (e)=>{
       e.preventDefault();
       const key = document.getElementById('cid').value.trim();
@@ -153,16 +163,31 @@ function adminPage(): string {
         const val = await api('/api/mappings/'+encodeURIComponent(item.name));
         tr.innerHTML = '<td><code>'+ item.name +'</code></td>'+
                        '<td><a href="'+ val.url +'" target="_blank">'+ val.url +'</a></td>'+
-                       '<td><button data-k="'+ item.name +'">Delete</button></td>';
+                       '<td>'+
+                         '<button data-action="edit" data-k="'+ item.name +'" style="margin-right:6px">Edit</button>'+
+                         '<button data-action="delete" data-k="'+ item.name +'">Delete</button>'+
+                       '</td>';
         tbody.appendChild(tr);
       }
-      tbody.addEventListener('click', async (e)=>{
-        if(e.target.tagName==='BUTTON'){
-          const k = e.target.getAttribute('data-k');
-          await api('/api/mappings/'+encodeURIComponent(k), {method:'DELETE'});
-          await loadList();
+      // Single persistent click handler each time loadList is called
+      tbody.onclick = async (e)=>{
+        const t = e.target as HTMLElement;
+        if(t && t.tagName === 'BUTTON'){
+          const action = t.getAttribute('data-action');
+          const k = t.getAttribute('data-k');
+          if(!k) return;
+          if(action === 'delete'){
+            await api('/api/mappings/'+encodeURIComponent(k), {method:'DELETE'});
+            await loadList();
+          } else if(action === 'edit'){
+            const v = await api('/api/mappings/'+encodeURIComponent(k));
+            (document.getElementById('cid')).value = k;
+            (document.getElementById('url')).value = v.url || '';
+            document.getElementById('save-btn').textContent = 'Update Mapping';
+            document.getElementById('cid').focus();
+          }
         }
-      }, {once:true});
+      };
     }
     checkAuth();
   </script>
