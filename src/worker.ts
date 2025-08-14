@@ -11,22 +11,22 @@ export default {
       return new Response("Not found", { status: 404 });
     }
 
-    // Prevent redirect loop: do not redirect /public/cs/qr or if 'evseid' is present in the query string
+    // Prevent redirect loop: do not redirect /public/cs/qr, if 'revseid' is present, or if chargerID is 'qr'
     if (url.pathname === "/public/cs/qr" || url.searchParams.has("evseid")) {
       return new Response("OK", { status: 200 });
     }
 
-    // Match /public/cs/{CHARGERID} with optional trailing slash
+    // Match /public/cs/{CHARGERID} with optional trailing slash, but exclude 'qr' as a chargerID
     const m = url.pathname.match(/^\/public\/cs\/([A-Za-z0-9]+)\/?$/);
-    if (!m) {
+    if (!m || m[1].toLowerCase() === "qr") {
       return new Response("Not found", { status: 404 });
     }
 
     const chargerId = m[1];
     const cc = (env.COUNTRY_CODE || "AU").toUpperCase();
 
-  const dest = new URL("https://cp.evx.tech/public/cs/qr");
-  dest.searchParams.set("evseid", `${cc}*EVX*${chargerId}`);
+    const dest = new URL("https://cp.evx.tech/public/cs/qr");
+    dest.searchParams.set("evseid", `${cc}*EVX*${chargerId}`);
 
     // 302 for QR flows
     return Response.redirect(dest.toString(), 302);
