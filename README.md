@@ -1,43 +1,61 @@
 
-# EVX CPR QR Redirect
+# EVX QR Redirector
 
-## Purpose
-Rewrite legacy paths:
-`https://cpr.evx.tech/public/cs/{CHARGERID}`
-to:
-`https://cp.evx.tech/public/cs/qr?evseid={COUNTRY}*EVX*{CHARGERID}`
+Cloudflare Worker that ensures `https://cpr.evx.tech/public/cs/{CHARGERID}` resolves to the correct EVX app URL and provides an authenticated admin console to manage chargerID→URL overrides.
 
-## Step-by-step Logic (Cloudflare Worker)
-1. **Host Check:**
-	- Only requests to `cpr.evx.tech` are processed. All other worker routed hosts return 404.
+## Features
+- Smart redirect to `https://cp.evx.tech/public/cs/qr?evseid={COUNTRY}*EVX*{CHARGERID}` with loop protection.
+- KV-backed overrides: if a chargerID exists in KV, redirect to that URL instead of the computed one.
+- Admin console at `/admin` with login, filter, and CRUD (add/update/delete) mappings.
+- Stateless HMAC-signed session cookie for authentication.
 
-2. **Bypass for QR and evseid:**
-	- If the path is `/public/cs/qr` or the query string contains `evseid`, the Worker returns HTTP 200 OK and does not redirect. This prevents redirect loops and ensures the QR endpoint is not processed again.
+## Routes (wrangler.toml)
+- `cpr.evx.tech/public/cs/*` – redirector
+- `cpr.evx.tech/admin*` – admin UI
+- `cpr.evx.tech/login` – server-side login endpoint
+- `cpr.evx.tech/api/*` – JSON APIs (auth required for mappings)
 
-3. **Path Matching:**
-	- The Worker matches paths of the form `/public/cs/{CHARGERID}` (where `{CHARGERID}` is alphanumeric, case-insensitive, and not `qr`).
-	- If the path does not match or `{CHARGERID}` is `qr`, it returns 404.
+## Configuration
+- Vars
+	- `COUNTRY_CODE` (default `AU`)
+	- `ADMIN_USERNAME` (default `admin`)
+- Secrets
+	- `ADMIN_PASSWORD` – admin login password
+	- `SESSION_SECRET` – HMAC signing secret for session cookie
 
-4. **Redirection:**
-	- For valid charger IDs, the Worker constructs a new URL:
-	  - Base: `https://cp.evx.tech/public/cs/qr`
-	  - Query: `evseid={COUNTRY}*EVX*{CHARGERID}`
-	  - `{COUNTRY}` is from the environment variable `COUNTRY_CODE` (default `AU`).
-	- Responds with a 302 redirect to this URL.
-
-## Deploy
-1. `npm ci`
-2. `npm run deploy`
-
-## Test local
-```bash
-npm run dev
-curl -I "http://127.0.0.1:8787/public/cs/20105B"
+Set secrets (PowerShell):
+```powershell
+wrangler secret put ADMIN_PASSWORD
+wrangler secret put SESSION_SECRET
 ```
 
-## CI
-Push to `main`. GitHub Actions runs tests and deploys via Wrangler.
+## Admin Console
+- Visit `https://cpr.evx.tech/admin`
+- Log in with `ADMIN_USERNAME` and `ADMIN_PASSWORD`
+- Filter list: type a prefix and press Enter or click Refresh
+- Add/update: use the form, button switches between Add/Update when editing
+- Delete: click Delete beside a row
 
-## Config
-- `COUNTRY_CODE` var. Default `AU`.
-- Route: `cpr.evx.tech/public/cs/*` in `wrangler.toml`.
+## Redirect Logic
+1. Only host `cpr.evx.tech` is served; others 404.
+2. Bypass if the path is `/public/cs/qr` or query contains `evseid`/`revseid`.
+3. Match `/public/cs/{CHARGERID}` (alphanumeric, not `qr`).
+4. If a mapping exists in KV for `{CHARGERID}`, redirect to that URL; otherwise build `evseid={COUNTRY}*EVX*{CHARGERID}` and 302.
+
+## Development
+Local dev (optional):
+```powershell
+wrangler dev
+```
+
+Deploy:
+```powershell
+wrangler deploy
+```
+
+## Troubleshooting
+- Login loops: ensure `ADMIN_PASSWORD` and `SESSION_SECRET` are set; hard refresh; check `/api/me?debug=1`.
+- No cookie: confirm `/login` returns `Set-Cookie` and Worker route `cpr.evx.tech/login` is present.
+
+## Changelog
+- v0.1.0: Admin CRUD UI, filter Enter-refresh, server-side login (/login), stateless HMAC cookie, branding tweaks.
