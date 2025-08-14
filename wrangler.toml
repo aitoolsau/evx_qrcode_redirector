@@ -1,10 +1,12 @@
 name = "evx-cpr-qr-redirect"
 main = "src/worker.ts"
 compatibility_date = "2025-08-01"
+account_id = "e04143feff1d545d4700b6406cccff9f"
 
 routes = [
   { pattern = "cpr.evx.tech/public/cs/*", zone_name = "evx.tech" }
   ,{ pattern = "cpr.evx.tech/admin*", zone_name = "evx.tech" }
+  ,{ pattern = "cpr.evx.tech/login", zone_name = "evx.tech" }
   ,{ pattern = "cpr.evx.tech/api/*", zone_name = "evx.tech" }
 ]
 
