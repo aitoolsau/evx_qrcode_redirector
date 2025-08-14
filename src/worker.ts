@@ -353,7 +353,8 @@ function adminPage(): string {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    const url = new URL(request.url);
+    try {
+      const url = new URL(request.url);
 
     // Only host cpr.evx.tech
     if (url.hostname !== "cpr.evx.tech") {
@@ -473,6 +474,23 @@ export default {
       return okJson({ ok: true }, { headers });
     }
 
+    // Authenticated debug to check CONFIG state
+    if (url.pathname === "/api/debug/config" && request.method === "GET") {
+      if (!(await requireAuth(request, env))) return unauthorized();
+      const pw = await env.MAPPINGS.get('CONFIG:ADMIN_PW', { cacheTtl: 0 }).catch(()=>null);
+      const sv = await env.MAPPINGS.get('CONFIG:SESSION_VERSION', { cacheTtl: 0 }).catch(()=>null);
+      let meta: any = { hasPw: Boolean(pw), sessionVersion: sv ? Number(sv) : null };
+      if (pw) {
+        try {
+          const cfg = JSON.parse(pw);
+          meta.updatedAt = cfg.updatedAt || null;
+          meta.iterations = cfg.iterations || null;
+          meta.hashLen = (cfg.hash && String(cfg.hash).length) || null;
+        } catch { meta.parseError = true; }
+      }
+      return okJson(meta);
+    }
+
     // Mappings CRUD (auth required)
     if (url.pathname.startsWith("/api/mappings")) {
       if (!(await requireAuth(request, env))) return unauthorized();
@@ -537,6 +555,11 @@ export default {
       target = dest.toString();
     }
 
-    return Response.redirect(target, 302);
+      return Response.redirect(target, 302);
+    } catch (err: any) {
+      try { console.error('Unhandled worker error:', err && (err.stack || err.message || String(err))); } catch {}
+      const msg = (err && (err.message || String(err))) || 'internal_error';
+      return okJson({ error: 'internal_error', message: msg }, { status: 500 });
+    }
   },
 };
