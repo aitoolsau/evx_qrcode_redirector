@@ -67,6 +67,18 @@ async function hmacVerify(secret: string, data: string, sig: string): Promise<bo
   return expected === sig; // acceptable here
 }
 
+// Session version support: bump to force re-login across all clients
+async function getSessionVersion(env: Env): Promise<number> {
+  const v = await env.MAPPINGS.get('CONFIG:SESSION_VERSION', { cacheTtl: 0 });
+  const n = Number(v || 1);
+  return Number.isFinite(n) && n > 0 ? n : 1;
+}
+async function bumpSessionVersion(env: Env): Promise<number> {
+  const v = (await getSessionVersion(env)) + 1;
+  await env.MAPPINGS.put('CONFIG:SESSION_VERSION', String(v));
+  return v;
+}
+
 // Password hashing (PBKDF2-SHA256) stored in KV under CONFIG:ADMIN_PW
 async function pbkdf2Hash(password: string, salt: any, iterations = 100_000): Promise<Uint8Array> {
   const keyMaterial = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']);
@@ -264,12 +276,25 @@ function adminPage(): string {
       if(nn !== cf){ msg.textContent = 'New passwords do not match'; msg.className='msg err'; return; }
       if(nn.length < 8){ msg.textContent = 'Password must be at least 8 characters'; msg.className='msg err'; return; }
       try {
-        await api('/api/password', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ current: cur, next: nn }) });
-        msg.textContent = 'Password updated'; msg.className='msg ok';
+        const res = await api('/api/password', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ current: cur, next: nn }) });
+        if (res && res.visible === false) {
+          msg.textContent = 'Password updated, syncing... this may take a few seconds';
+          msg.className='msg';
+        } else {
+          msg.textContent = 'Password updated'; msg.className='msg ok';
+        }
         (document.getElementById('pw_current')).value='';
         (document.getElementById('pw_new')).value='';
         (document.getElementById('pw_confirm')).value='';
-        await loadPwMeta();
+        // Try multiple times (up to ~10s) to see the new hash appear
+        let attempts = 0;
+        while (attempts < 20) {
+          await loadPwMeta();
+          const txt = document.getElementById('pw-meta').textContent || '';
+          if (!txt.includes('Using default ADMIN_PASSWORD')) break;
+          await new Promise(r=>setTimeout(r, 500));
+          attempts++;
+        }
       } catch(err){ msg.textContent = err.message; msg.className='msg err'; }
     });
     async function loadPwMeta(attempt=0){
@@ -357,9 +382,10 @@ export default {
   const uOk = (env.ADMIN_USERNAME || 'admin') === user;
   const pOk = await verifyPassword(pass, env);
       if (!uOk || !pOk) return html('<script>location.href="/admin?login=failed"</script>', { status: 401 });
-      const iat = Math.floor(Date.now()/1000);
-      const exp = iat + 3600;
-      const payload = { u: user, iat, exp };
+  const iat = Math.floor(Date.now()/1000);
+  const exp = iat + 3600;
+  const ver = await getSessionVersion(env);
+  const payload = { u: user, iat, exp, v: ver };
       const payloadB64 = b64urlFromString(JSON.stringify(payload));
   const sig = await hmacSign((env as any).SESSION_SECRET || env.ADMIN_PASSWORD || '', payloadB64);
       const token = `${payloadB64}.${sig}`;
@@ -381,9 +407,12 @@ export default {
       if (!secret) return debug ? okJson({ error: 'unauthorized', reason: 'no_secret' }, { status: 401 }) : unauthorized();
       if (!(await hmacVerify(secret, payloadB64, sig))) return debug ? okJson({ error: 'unauthorized', reason: 'bad_sig' }, { status: 401 }) : unauthorized();
       try {
-        const payload = JSON.parse(stringFromB64url(payloadB64));
+  const payload = JSON.parse(stringFromB64url(payloadB64));
         const now = Math.floor(Date.now() / 1000);
         if (payload.exp && now > Number(payload.exp)) return debug ? okJson({ error: 'unauthorized', reason: 'expired' }, { status: 401 }) : unauthorized();
+  // Optional: enforce session version match
+  const ver = await getSessionVersion(env);
+  if (payload.v && Number(payload.v) !== ver) return debug ? okJson({ error: 'unauthorized', reason: 'session_version' }, { status: 401 }) : unauthorized();
         return okJson({ ok: true });
       } catch {
         return debug ? okJson({ error: 'unauthorized', reason: 'bad_payload' }, { status: 401 }) : unauthorized();
@@ -399,7 +428,8 @@ export default {
         if (!uOk || !pOk) return unauthorized();
   const iat = Math.floor(Date.now()/1000);
   const exp = iat + 3600;
-  const payload = { u: user, iat, exp };
+  const ver = await getSessionVersion(env);
+  const payload = { u: user, iat, exp, v: ver };
   const payloadB64 = b64urlFromString(JSON.stringify(payload));
   const sig = await hmacSign((env as any).SESSION_SECRET || env.ADMIN_PASSWORD || '', payloadB64);
   const token = `${payloadB64}.${sig}`;
@@ -430,8 +460,9 @@ export default {
       if (!ok) return okJson({ error: 'bad_current' }, { status: 403 });
   const salt = new Uint8Array(16); crypto.getRandomValues(salt);
   const hash = await pbkdf2Hash(next, salt, 150_000);
-      const rec = { iterations: 150000, salt: bytesToB64url(salt), hash: bytesToB64url(hash), updatedAt: new Date().toISOString() };
-      await env.MAPPINGS.put('CONFIG:ADMIN_PW', JSON.stringify(rec));
+  const rec = { iterations: 150000, salt: bytesToB64url(salt), hash: bytesToB64url(hash), updatedAt: new Date().toISOString() };
+  await env.MAPPINGS.put('CONFIG:ADMIN_PW', JSON.stringify(rec));
+  await bumpSessionVersion(env); // force re-login everywhere
       const after = await env.MAPPINGS.get('CONFIG:ADMIN_PW', { cacheTtl: 0 });
       return okJson({ ok: true, visible: Boolean(after) });
     }
