@@ -94,7 +94,7 @@ function adminPage(): string {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>EVX – Log In</title>
+  <title>EVX Charger QR Redirect</title>
   <style>
     body{background:#f0f0f1;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:0;padding:0}
     #login{width:320px;margin:6% auto 2rem;padding:0}
@@ -122,11 +122,11 @@ function adminPage(): string {
     <div class="logo"><img src="https://evx.tech/wp-content/uploads/2022/05/EVX-Logo-1.png" alt="EVX logo" /></div>
     <div class="login-card">
       <h1>Log In</h1>
-      <form id="login-form">
+      <form id="login-form" method="post" action="/login">
         <label for="user">Username or Email Address</label>
-        <input id="user" autocomplete="username" required />
+        <input id="user" name="user" autocomplete="username" required />
         <label for="pass">Password</label>
-        <input id="pass" type="password" autocomplete="current-password" required />
+        <input id="pass" name="pass" type="password" autocomplete="current-password" required />
         <button class="button-primary" type="submit">Log In</button>
         <div id="login-msg" class="msg"></div>
       </form>
@@ -141,7 +141,7 @@ function adminPage(): string {
         <div class="row"><label for="cid">Charger ID</label><input id="cid" placeholder="20501B" required /></div>
         <div class="row"><label for="url">Target URL</label><input id="url" placeholder="https://cp.evx.tech/public/cs/qr?evseid=AU*EVX*20501B" required /></div>
         <div class="row">
-          <button id="save-btn" class="button-primary" type="submit">Save Mapping</button>
+          <button id="save-btn" class="button-primary" type="submit">Add Mapping</button>
           <button id="clear-btn" type="button">Clear</button>
         </div>
         <div id="save-msg" class="msg"></div>
@@ -154,6 +154,7 @@ function adminPage(): string {
   </div>
 
   <script>
+  let isEditing = false;
     async function api(path, opts){
       const r = await fetch(path, Object.assign({credentials:'include'}, opts||{}));
       const ct = r.headers.get('content-type')||'';
@@ -171,23 +172,18 @@ function adminPage(): string {
         document.getElementById('app').style.display='none';
       }
     }
-  document.getElementById('login-form').addEventListener('submit', async (e)=>{
-      e.preventDefault();
-      const user = document.getElementById('user').value.trim();
-      const pass = document.getElementById('pass').value;
-      const msg = document.getElementById('login-msg'); msg.textContent=''; msg.className='msg';
-      try {
-    await api('/api/login', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({user, pass})});
-    const rd = getParam('redirect_to') || '/admin';
-    window.location.href = rd; return;
-      } catch(err){ msg.textContent = err.message; msg.className='msg err'; }
-    });
+  // No JS login submit handler; the form POSTs to /login which sets cookie and redirects.
     document.getElementById('logout').addEventListener('click', async ()=>{ await api('/api/logout', {method:'POST'}); window.location.href = '/admin'; });
     document.getElementById('refresh').addEventListener('click', loadList);
+    // Pressing Enter in the filter triggers refresh
+    document.getElementById('prefix').addEventListener('keydown', (e)=>{
+      if(e.key === 'Enter') { e.preventDefault(); loadList(); }
+    });
     document.getElementById('clear-btn').addEventListener('click', ()=>{
       (document.getElementById('cid')).value = '';
       (document.getElementById('url')).value = '';
-      document.getElementById('save-btn').textContent = 'Save Mapping';
+      isEditing = false;
+      document.getElementById('save-btn').textContent = 'Add Mapping';
       document.getElementById('save-msg').textContent = '';
       document.getElementById('cid').focus();
     });
@@ -197,7 +193,14 @@ function adminPage(): string {
       const url = document.getElementById('url').value.trim();
       const msg = document.getElementById('save-msg'); msg.textContent=''; msg.className='msg';
       try { await api('/api/mappings/'+encodeURIComponent(key), {method:'PUT', headers:{'content-type':'application/json'}, body: JSON.stringify({url})});
-        msg.textContent = 'Saved'; msg.className='msg ok'; await loadList();
+        msg.textContent = isEditing ? 'Updated' : 'Added';
+        msg.className='msg ok';
+        await loadList();
+        // Return to add mode after save
+        isEditing = false;
+        (document.getElementById('cid')).value = '';
+        (document.getElementById('url')).value = '';
+        document.getElementById('save-btn').textContent = 'Add Mapping';
       } catch(err){ msg.textContent = err.message; msg.className='msg err'; }
     });
     async function loadList(){
@@ -230,6 +233,7 @@ function adminPage(): string {
             const v = await api('/api/mappings/'+encodeURIComponent(k));
             (document.getElementById('cid')).value = k;
             (document.getElementById('url')).value = v.url || '';
+            isEditing = true;
             document.getElementById('save-btn').textContent = 'Update Mapping';
             document.getElementById('cid').focus();
           }
@@ -257,9 +261,53 @@ export default {
     }
 
     // Auth-related endpoints
+    if (url.pathname === "/login" && request.method === "POST") {
+      // Handle form-encoded login to avoid any JS/cookie issues
+      const ct = request.headers.get('content-type') || '';
+      let user = '', pass = '';
+      if (ct.includes('application/x-www-form-urlencoded')){
+        const form = await request.formData();
+        user = String(form.get('user') || '');
+        pass = String(form.get('pass') || '');
+      } else if (ct.includes('application/json')){
+        const body = await request.json().catch(()=>({}));
+        user = String((body as any).user || '');
+        pass = String((body as any).pass || '');
+      }
+      const uOk = (env.ADMIN_USERNAME || 'admin') === user;
+      const pOk = (env.ADMIN_PASSWORD || '') === pass;
+      if (!uOk || !pOk) return html('<script>location.href="/admin?login=failed"</script>', { status: 401 });
+      const iat = Math.floor(Date.now()/1000);
+      const exp = iat + 3600;
+      const payload = { u: user, iat, exp };
+      const payloadB64 = b64urlFromString(JSON.stringify(payload));
+      const sig = await hmacSign((env as any).SESSION_SECRET || env.ADMIN_PASSWORD || '', payloadB64);
+      const token = `${payloadB64}.${sig}`;
+      const headers = new Headers({ "Set-Cookie": `admin_session=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=3600` });
+      const rd = url.searchParams.get('redirect_to') || '/admin';
+      headers.set('Location', rd);
+      return new Response(null, { status: 303, headers });
+    }
     if (url.pathname === "/api/me") {
-      const authed = await requireAuth(request, env);
-      return authed ? okJson({ ok: true }) : unauthorized();
+      const debug = url.searchParams.get('debug') === '1';
+      const cookie = request.headers.get('cookie') || '';
+      const m = cookie.match(/(?:^|;\s*)admin_session=([^;]+)/);
+      if (!m) return debug ? okJson({ error: 'unauthorized', reason: 'no_cookie' }, { status: 401 }) : unauthorized();
+      const token = decodeURIComponent(m[1]);
+      const parts = token.split('.');
+      if (parts.length !== 2) return debug ? okJson({ error: 'unauthorized', reason: 'bad_token' }, { status: 401 }) : unauthorized();
+      const [payloadB64, sig] = parts;
+      const secret = (env as any).SESSION_SECRET || env.ADMIN_PASSWORD || '';
+      if (!secret) return debug ? okJson({ error: 'unauthorized', reason: 'no_secret' }, { status: 401 }) : unauthorized();
+      if (!(await hmacVerify(secret, payloadB64, sig))) return debug ? okJson({ error: 'unauthorized', reason: 'bad_sig' }, { status: 401 }) : unauthorized();
+      try {
+        const payload = JSON.parse(stringFromB64url(payloadB64));
+        const now = Math.floor(Date.now() / 1000);
+        if (payload.exp && now > Number(payload.exp)) return debug ? okJson({ error: 'unauthorized', reason: 'expired' }, { status: 401 }) : unauthorized();
+        return okJson({ ok: true });
+      } catch {
+        return debug ? okJson({ error: 'unauthorized', reason: 'bad_payload' }, { status: 401 }) : unauthorized();
+      }
     }
     if (url.pathname === "/api/login" && request.method === "POST") {
       try {
@@ -275,7 +323,7 @@ export default {
   const payloadB64 = b64urlFromString(JSON.stringify(payload));
   const sig = await hmacSign(env.ADMIN_PASSWORD || '', payloadB64);
   const token = `${payloadB64}.${sig}`;
-  const headers = new Headers({ "Set-Cookie": `admin_session=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Domain=cpr.evx.tech; Max-Age=3600` });
+  const headers = new Headers({ "Set-Cookie": `admin_session=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=3600` });
         return okJson({ ok: true }, { headers });
       } catch {
         return okJson({ error: "bad_request" }, { status: 400 });
@@ -284,7 +332,7 @@ export default {
     if (url.pathname === "/api/logout" && request.method === "POST") {
       const cookie = request.headers.get("cookie") || "";
       const m = cookie.match(/(?:^|;\s*)admin_session=([^;]+)/);
-  const headers = new Headers({ "Set-Cookie": `admin_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Domain=cpr.evx.tech; Max-Age=0` });
+  const headers = new Headers({ "Set-Cookie": `admin_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0` });
       return okJson({ ok: true }, { headers });
     }
 
