@@ -8,6 +8,7 @@ routes = [
   ,{ pattern = "cpr.evx.tech/admin*", zone_name = "evx.tech" }
   ,{ pattern = "cpr.evx.tech/login", zone_name = "evx.tech" }
   ,{ pattern = "cpr.evx.tech/api/*", zone_name = "evx.tech" }
+  ,{ pattern = "cpr.evx.tech/logout", zone_name = "evx.tech" }
 ]
 
 [vars]
