@@ -131,7 +131,11 @@ async function requireAuth(request: Request, env: Env): Promise<boolean> {
     const now = Math.floor(Date.now() / 1000);
     if (!payload || typeof payload !== 'object') return false;
     if (payload.exp && now > Number(payload.exp)) return false;
-    return true;
+  // Enforce session version for all protected APIs
+  const ver = await getSessionVersion(env);
+  if (payload.v === undefined) return false;
+  if (Number(payload.v) !== ver) return false;
+  return true;
   } catch {
     return false;
   }
@@ -236,7 +240,7 @@ function adminPage(): string {
       }
     }
   // No JS login submit handler; the form POSTs to /login which sets cookie and redirects.
-    document.getElementById('logout').addEventListener('click', async ()=>{ await api('/api/logout', {method:'POST'}); window.location.href = '/admin'; });
+  document.getElementById('logout').addEventListener('click', async ()=>{ window.location.href = '/logout'; });
     document.getElementById('refresh').addEventListener('click', loadList);
     // Pressing Enter in the filter triggers refresh
     document.getElementById('prefix').addEventListener('keydown', (e)=>{
@@ -478,6 +482,13 @@ export default {
       const m = cookie.match(/(?:^|;\s*)admin_session=([^;]+)/);
   const headers = new Headers({ "Set-Cookie": `admin_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0` });
       return okJson({ ok: true }, { headers });
+    }
+
+    // GET /logout helper for client redirects
+    if (url.pathname === "/logout" && request.method === "GET") {
+      const headers = new Headers({ "Set-Cookie": `admin_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0` });
+      headers.set('Location', '/admin');
+      return new Response(null, { status: 303, headers });
     }
 
     // Authenticated debug to check CONFIG state
