@@ -69,7 +69,7 @@ async function hmacVerify(secret: string, data: string, sig: string): Promise<bo
 
 // Session version support: bump to force re-login across all clients
 async function getSessionVersion(env: Env): Promise<number> {
-  const v = await env.MAPPINGS.get('CONFIG:SESSION_VERSION', { cacheTtl: 0 });
+  const v = await env.MAPPINGS.get('CONFIG:SESSION_VERSION');
   const n = Number(v || 1);
   return Number.isFinite(n) && n > 0 ? n : 1;
 }
@@ -99,7 +99,7 @@ function b64urlToBytes(b: string): Uint8Array {
   return out;
 }
 async function verifyPassword(pass: string, env: Env): Promise<boolean> {
-  const rec = await env.MAPPINGS.get('CONFIG:ADMIN_PW', { cacheTtl: 0 });
+  const rec = await env.MAPPINGS.get('CONFIG:ADMIN_PW');
   if (rec) {
     try {
       const cfg = JSON.parse(rec);
@@ -442,7 +442,7 @@ export default {
     }
     if (url.pathname === "/api/password" && request.method === "GET") {
       if (!(await requireAuth(request, env))) return unauthorized();
-      const rec = await env.MAPPINGS.get('CONFIG:ADMIN_PW', { cacheTtl: 0 });
+      const rec = await env.MAPPINGS.get('CONFIG:ADMIN_PW');
       if (!rec) return okJson({ hasRecord: false });
       try {
         const cfg = JSON.parse(rec);
@@ -464,7 +464,7 @@ export default {
   const rec = { iterations: 150000, salt: bytesToB64url(salt), hash: bytesToB64url(hash), updatedAt: new Date().toISOString() };
   await env.MAPPINGS.put('CONFIG:ADMIN_PW', JSON.stringify(rec));
   await bumpSessionVersion(env); // force re-login everywhere
-      const after = await env.MAPPINGS.get('CONFIG:ADMIN_PW', { cacheTtl: 0 });
+  const after = await env.MAPPINGS.get('CONFIG:ADMIN_PW');
       return okJson({ ok: true, visible: Boolean(after) });
     }
     if (url.pathname === "/api/logout" && request.method === "POST") {
@@ -477,8 +477,8 @@ export default {
     // Authenticated debug to check CONFIG state
     if (url.pathname === "/api/debug/config" && request.method === "GET") {
       if (!(await requireAuth(request, env))) return unauthorized();
-      const pw = await env.MAPPINGS.get('CONFIG:ADMIN_PW', { cacheTtl: 0 }).catch(()=>null);
-      const sv = await env.MAPPINGS.get('CONFIG:SESSION_VERSION', { cacheTtl: 0 }).catch(()=>null);
+      const pw = await env.MAPPINGS.get('CONFIG:ADMIN_PW').catch(()=>null);
+      const sv = await env.MAPPINGS.get('CONFIG:SESSION_VERSION').catch(()=>null);
       let meta: any = { hasPw: Boolean(pw), sessionVersion: sv ? Number(sv) : null };
       if (pw) {
         try {
