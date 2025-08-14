@@ -34,17 +34,19 @@ function unauthorized(): Response {
 
 // Stateless session: HMAC-signed payload { u, iat, exp }
 function b64urlFromString(s: string): string {
-  // encodeURIComponent handles unicode; unescape for btoa
-  // eslint-disable-next-line deprecate/unescape
-  const b64 = btoa(unescape(encodeURIComponent(s)));
+  const bytes = new TextEncoder().encode(s);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  const b64 = btoa(bin);
   return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }
 function stringFromB64url(b: string): string {
   const base = b.replace(/-/g, '+').replace(/_/g, '/');
   const pad = base + '==='.slice((base.length + 3) % 4);
-  const str = atob(pad);
-  // eslint-disable-next-line deprecate/escape
-  return decodeURIComponent(escape(str));
+  const bin = atob(pad);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
 }
 async function hmacSign(secret: string, data: string): Promise<string> {
   const key = await crypto.subtle.importKey(
@@ -72,7 +74,7 @@ async function requireAuth(request: Request, env: Env): Promise<boolean> {
   const parts = token.split('.')
   if (parts.length !== 2) return false;
   const [payloadB64, sig] = parts;
-  const secret = env.ADMIN_PASSWORD || '';
+  const secret = (env as any).SESSION_SECRET || env.ADMIN_PASSWORD || '';
   if (!secret) return false;
   if (!(await hmacVerify(secret, payloadB64, sig))) return false;
   try {
@@ -273,7 +275,7 @@ export default {
   const payloadB64 = b64urlFromString(JSON.stringify(payload));
   const sig = await hmacSign(env.ADMIN_PASSWORD || '', payloadB64);
   const token = `${payloadB64}.${sig}`;
-  const headers = new Headers({ "Set-Cookie": `admin_session=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=3600` });
+  const headers = new Headers({ "Set-Cookie": `admin_session=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Domain=cpr.evx.tech; Max-Age=3600` });
         return okJson({ ok: true }, { headers });
       } catch {
         return okJson({ error: "bad_request" }, { status: 400 });
@@ -282,7 +284,7 @@ export default {
     if (url.pathname === "/api/logout" && request.method === "POST") {
       const cookie = request.headers.get("cookie") || "";
       const m = cookie.match(/(?:^|;\s*)admin_session=([^;]+)/);
-  const headers = new Headers({ "Set-Cookie": `admin_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0` });
+  const headers = new Headers({ "Set-Cookie": `admin_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Domain=cpr.evx.tech; Max-Age=0` });
       return okJson({ ok: true }, { headers });
     }
 
