@@ -97,7 +97,8 @@ async function verifyPassword(pass: string, env: Env): Promise<boolean> {
   const got = await pbkdf2Hash(pass, salt, it);
       return bytesToB64url(got) === expect;
     } catch {
-      // fall back to env compare if parse fails
+  // Stored record exists but is unreadable; do not fall back
+  return false;
     }
   }
   return (env.ADMIN_PASSWORD || '') === pass;
@@ -197,7 +198,8 @@ function adminPage(): string {
         <button class="button-primary" type="submit">Update Password</button>
         <div id="pw-msg" class="msg"></div>
       </form>
-      <div class="msg">Note: Password changes take effect immediately. Your current session remains valid.</div>
+  <div id="pw-meta" class="msg"></div>
+  <div class="msg">Note: Password changes take effect immediately. Your current session remains valid.</div>
     </section>
   </div>
 
@@ -215,6 +217,7 @@ function adminPage(): string {
       try { await api('/api/me');
         document.getElementById('login').style.display='none';
         document.getElementById('app').style.display='block';
+  loadPwMeta().catch(()=>{});
       } catch {
         document.getElementById('login').style.display='block';
         document.getElementById('app').style.display='none';
@@ -266,8 +269,19 @@ function adminPage(): string {
         (document.getElementById('pw_current')).value='';
         (document.getElementById('pw_new')).value='';
         (document.getElementById('pw_confirm')).value='';
+        await loadPwMeta();
       } catch(err){ msg.textContent = err.message; msg.className='msg err'; }
     });
+    async function loadPwMeta(){
+      const meta = await api('/api/password');
+      const el = document.getElementById('pw-meta');
+      if(meta && meta.hasRecord){
+        const when = meta.updatedAt ? new Date(meta.updatedAt).toLocaleString() : 'unknown time';
+        el.textContent = 'Password last updated: ' + when + (meta.iterations ? ' • PBKDF2 iterations: ' + meta.iterations : '');
+      } else {
+        el.textContent = 'Using default ADMIN_PASSWORD secret (no stored hash yet).';
+      }
+    }
     async function loadList(){
       const prefix = document.getElementById('prefix').value.trim();
       const data = await api('/api/mappings?prefix='+encodeURIComponent(prefix));
@@ -386,12 +400,23 @@ export default {
   const exp = iat + 3600;
   const payload = { u: user, iat, exp };
   const payloadB64 = b64urlFromString(JSON.stringify(payload));
-  const sig = await hmacSign(env.ADMIN_PASSWORD || '', payloadB64);
+  const sig = await hmacSign((env as any).SESSION_SECRET || env.ADMIN_PASSWORD || '', payloadB64);
   const token = `${payloadB64}.${sig}`;
   const headers = new Headers({ "Set-Cookie": `admin_session=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=3600` });
         return okJson({ ok: true }, { headers });
       } catch {
         return okJson({ error: "bad_request" }, { status: 400 });
+      }
+    }
+    if (url.pathname === "/api/password" && request.method === "GET") {
+      if (!(await requireAuth(request, env))) return unauthorized();
+      const rec = await env.MAPPINGS.get('CONFIG:ADMIN_PW');
+      if (!rec) return okJson({ hasRecord: false });
+      try {
+        const cfg = JSON.parse(rec);
+        return okJson({ hasRecord: true, updatedAt: cfg.updatedAt || null, iterations: cfg.iterations || null });
+      } catch {
+        return okJson({ hasRecord: true, parseError: true });
       }
     }
     if (url.pathname === "/api/password" && request.method === "POST") {
@@ -424,10 +449,10 @@ export default {
           const val = await env.MAPPINGS.get(id);
           return val ? okJson({ key: id, url: val }) : okJson({ error: "not_found" }, { status: 404 });
         }
-        const prefix = url.searchParams.get("prefix") || "";
+    const prefix = url.searchParams.get("prefix") || "";
   const list = await env.MAPPINGS.list({ prefix });
-  // filter out session keys
-  const filtered = list.keys.filter((k: any) => !k.name.startsWith("SESS:"));
+  // filter out internal keys
+  const filtered = list.keys.filter((k: any) => !k.name.startsWith("SESS:") && !k.name.startsWith("CONFIG:"));
   return okJson({ keys: filtered });
       }
       if (request.method === "PUT") {
