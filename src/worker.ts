@@ -124,15 +124,15 @@ function adminPage(): string {
         document.getElementById('app').style.display='none';
       }
     }
-    document.getElementById('login-form').addEventListener('submit', async (e)=>{
+  document.getElementById('login-form').addEventListener('submit', async (e)=>{
       e.preventDefault();
       const user = document.getElementById('user').value.trim();
       const pass = document.getElementById('pass').value;
       const msg = document.getElementById('login-msg'); msg.textContent=''; msg.className='msg';
       try {
-        await api('/api/login', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({user, pass})});
-        const rd = getParam('redirect_to'); if(rd){ window.location.href = rd; return; }
-        msg.textContent='Logged in'; msg.className='msg ok'; await checkAuth();
+    await api('/api/login', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({user, pass})});
+    const rd = getParam('redirect_to') || '/admin';
+    window.location.href = rd; return;
       } catch(err){ msg.textContent = err.message; msg.className='msg err'; }
     });
     document.getElementById('logout').addEventListener('click', async ()=>{ await api('/api/logout', {method:'POST'}); window.location.href = '/admin'; });
@@ -226,7 +226,7 @@ export default {
         crypto.getRandomValues(tokenBytes);
         const token = btoa(String.fromCharCode(...tokenBytes)).replace(/\+/g, '-').replace(/\//g, '_');
         await env.MAPPINGS.put(`SESS:${token}`, "1", { expirationTtl: 3600 });
-        const headers = new Headers({ "set-cookie": `admin_session=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=3600` });
+  const headers = new Headers({ "Set-Cookie": `admin_session=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=3600` });
         return okJson({ ok: true }, { headers });
       } catch {
         return okJson({ error: "bad_request" }, { status: 400 });
@@ -238,7 +238,7 @@ export default {
       if (m) {
         await env.MAPPINGS.delete(`SESS:${decodeURIComponent(m[1])}`);
       }
-      const headers = new Headers({ "set-cookie": `admin_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0` });
+  const headers = new Headers({ "Set-Cookie": `admin_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0` });
       return okJson({ ok: true }, { headers });
     }
 
