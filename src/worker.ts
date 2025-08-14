@@ -1,6 +1,6 @@
 export interface Env {
   COUNTRY_CODE?: string; // default AU
-  // KV for mappings and sessions (prefix SESS: for session tokens)
+  // KV for chargerID -> URL mappings
   MAPPINGS: any;
   // Optional simple admin creds (single-user)
   ADMIN_USERNAME?: string;
@@ -32,13 +32,58 @@ function unauthorized(): Response {
   return okJson({ error: "unauthorized" }, { status: 401 });
 }
 
+// Stateless session: HMAC-signed payload { u, iat, exp }
+function b64urlFromString(s: string): string {
+  // encodeURIComponent handles unicode; unescape for btoa
+  // eslint-disable-next-line deprecate/unescape
+  const b64 = btoa(unescape(encodeURIComponent(s)));
+  return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+function stringFromB64url(b: string): string {
+  const base = b.replace(/-/g, '+').replace(/_/g, '/');
+  const pad = base + '==='.slice((base.length + 3) % 4);
+  const str = atob(pad);
+  // eslint-disable-next-line deprecate/escape
+  return decodeURIComponent(escape(str));
+}
+async function hmacSign(secret: string, data: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(data));
+  const bytes = new Uint8Array(sig);
+  let str = '';
+  for (let i = 0; i < bytes.length; i++) str += String.fromCharCode(bytes[i]);
+  return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+async function hmacVerify(secret: string, data: string, sig: string): Promise<boolean> {
+  const expected = await hmacSign(secret, data);
+  return expected === sig; // acceptable here
+}
 async function requireAuth(request: Request, env: Env): Promise<boolean> {
-  const cookie = request.headers.get("cookie") || "";
+  const cookie = request.headers.get('cookie') || '';
   const m = cookie.match(/(?:^|;\s*)admin_session=([^;]+)/);
   if (!m) return false;
   const token = decodeURIComponent(m[1]);
-  const exists = await env.MAPPINGS.get(`SESS:${token}`);
-  return !!exists;
+  const parts = token.split('.')
+  if (parts.length !== 2) return false;
+  const [payloadB64, sig] = parts;
+  const secret = env.ADMIN_PASSWORD || '';
+  if (!secret) return false;
+  if (!(await hmacVerify(secret, payloadB64, sig))) return false;
+  try {
+    const payload = JSON.parse(stringFromB64url(payloadB64));
+    const now = Math.floor(Date.now() / 1000);
+    if (!payload || typeof payload !== 'object') return false;
+    if (payload.exp && now > Number(payload.exp)) return false;
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function adminPage(): string {
@@ -222,10 +267,12 @@ export default {
         const uOk = (env.ADMIN_USERNAME || "admin") === String(user || "");
         const pOk = (env.ADMIN_PASSWORD || "") === String(pass || "");
         if (!uOk || !pOk) return unauthorized();
-        const tokenBytes = new Uint8Array(16);
-        crypto.getRandomValues(tokenBytes);
-        const token = btoa(String.fromCharCode(...tokenBytes)).replace(/\+/g, '-').replace(/\//g, '_');
-        await env.MAPPINGS.put(`SESS:${token}`, "1", { expirationTtl: 3600 });
+  const iat = Math.floor(Date.now()/1000);
+  const exp = iat + 3600;
+  const payload = { u: user, iat, exp };
+  const payloadB64 = b64urlFromString(JSON.stringify(payload));
+  const sig = await hmacSign(env.ADMIN_PASSWORD || '', payloadB64);
+  const token = `${payloadB64}.${sig}`;
   const headers = new Headers({ "Set-Cookie": `admin_session=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=3600` });
         return okJson({ ok: true }, { headers });
       } catch {
@@ -235,9 +282,6 @@ export default {
     if (url.pathname === "/api/logout" && request.method === "POST") {
       const cookie = request.headers.get("cookie") || "";
       const m = cookie.match(/(?:^|;\s*)admin_session=([^;]+)/);
-      if (m) {
-        await env.MAPPINGS.delete(`SESS:${decodeURIComponent(m[1])}`);
-      }
   const headers = new Headers({ "Set-Cookie": `admin_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0` });
       return okJson({ ok: true }, { headers });
     }
