@@ -87,7 +87,7 @@ function b64urlToBytes(b: string): Uint8Array {
   return out;
 }
 async function verifyPassword(pass: string, env: Env): Promise<boolean> {
-  const rec = await env.MAPPINGS.get('CONFIG:ADMIN_PW');
+  const rec = await env.MAPPINGS.get('CONFIG:ADMIN_PW', { cacheTtl: 0 });
   if (rec) {
     try {
       const cfg = JSON.parse(rec);
@@ -272,7 +272,7 @@ function adminPage(): string {
         await loadPwMeta();
       } catch(err){ msg.textContent = err.message; msg.className='msg err'; }
     });
-    async function loadPwMeta(){
+    async function loadPwMeta(attempt=0){
       const meta = await api('/api/password');
       const el = document.getElementById('pw-meta');
       if(meta && meta.hasRecord){
@@ -280,6 +280,7 @@ function adminPage(): string {
         el.textContent = 'Password last updated: ' + when + (meta.iterations ? ' • PBKDF2 iterations: ' + meta.iterations : '');
       } else {
         el.textContent = 'Using default ADMIN_PASSWORD secret (no stored hash yet).';
+        if (attempt < 3) setTimeout(()=>loadPwMeta(attempt+1), 500);
       }
     }
     async function loadList(){
@@ -410,7 +411,7 @@ export default {
     }
     if (url.pathname === "/api/password" && request.method === "GET") {
       if (!(await requireAuth(request, env))) return unauthorized();
-      const rec = await env.MAPPINGS.get('CONFIG:ADMIN_PW');
+      const rec = await env.MAPPINGS.get('CONFIG:ADMIN_PW', { cacheTtl: 0 });
       if (!rec) return okJson({ hasRecord: false });
       try {
         const cfg = JSON.parse(rec);
@@ -431,7 +432,8 @@ export default {
   const hash = await pbkdf2Hash(next, salt, 150_000);
       const rec = { iterations: 150000, salt: bytesToB64url(salt), hash: bytesToB64url(hash), updatedAt: new Date().toISOString() };
       await env.MAPPINGS.put('CONFIG:ADMIN_PW', JSON.stringify(rec));
-      return okJson({ ok: true });
+      const after = await env.MAPPINGS.get('CONFIG:ADMIN_PW', { cacheTtl: 0 });
+      return okJson({ ok: true, visible: Boolean(after) });
     }
     if (url.pathname === "/api/logout" && request.method === "POST") {
       const cookie = request.headers.get("cookie") || "";
