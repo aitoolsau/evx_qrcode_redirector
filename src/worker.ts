@@ -7,6 +7,9 @@ export interface Env {
   ADMIN_PASSWORD?: string; // set via wrangler secret or env var
 }
 
+// Minimal, staged refactor: import a few helpers without removing existing code yet
+import { verifyPassword as verifyPwSvc, issueSession, logoutHeaders as logoutHeadersSvc } from "./services/auth";
+
 const JSON_HEADERS = {
   "content-type": "application/json; charset=utf-8",
 };
@@ -385,15 +388,9 @@ export default {
         pass = String((body as any).pass || '');
       }
   const uOk = (env.ADMIN_USERNAME || 'admin') === user;
-  const pOk = await verifyPassword(pass, env);
+  const pOk = await verifyPwSvc(env, pass);
       if (!uOk || !pOk) return html('<script>location.href="/admin?login=failed"</script>', { status: 401 });
-  const iat = Math.floor(Date.now()/1000);
-  const exp = iat + 3600;
-  const ver = await getSessionVersion(env);
-  const payload = { u: user, iat, exp, v: ver };
-      const payloadB64 = b64urlFromString(JSON.stringify(payload));
-  const sig = await hmacSign((env as any).SESSION_SECRET || env.ADMIN_PASSWORD || '', payloadB64);
-      const token = `${payloadB64}.${sig}`;
+  const token = await issueSession(env, user);
       const headers = new Headers({ "Set-Cookie": `admin_session=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=3600` });
       const rd = url.searchParams.get('redirect_to') || '/admin';
       headers.set('Location', rd);
@@ -429,15 +426,9 @@ export default {
         const user = String((body as any).user || "");
         const pass = String((body as any).pass || "");
   const uOk = (env.ADMIN_USERNAME || "admin") === String(user || "");
-  const pOk = await verifyPassword(String(pass || ""), env);
+  const pOk = await verifyPwSvc(env, String(pass || ""));
         if (!uOk || !pOk) return unauthorized();
-  const iat = Math.floor(Date.now()/1000);
-  const exp = iat + 3600;
-  const ver = await getSessionVersion(env);
-  const payload = { u: user, iat, exp, v: ver };
-  const payloadB64 = b64urlFromString(JSON.stringify(payload));
-  const sig = await hmacSign((env as any).SESSION_SECRET || env.ADMIN_PASSWORD || '', payloadB64);
-  const token = `${payloadB64}.${sig}`;
+  const token = await issueSession(env, user);
   const headers = new Headers({ "Set-Cookie": `admin_session=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=3600` });
         return okJson({ ok: true }, { headers });
       } catch {
@@ -478,15 +469,13 @@ export default {
       }
     }
     if (url.pathname === "/api/logout" && request.method === "POST") {
-      const cookie = request.headers.get("cookie") || "";
-      const m = cookie.match(/(?:^|;\s*)admin_session=([^;]+)/);
-  const headers = new Headers({ "Set-Cookie": `admin_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0` });
+      const headers = await logoutHeadersSvc();
       return okJson({ ok: true }, { headers });
     }
 
     // GET /logout helper for client redirects
     if (url.pathname === "/logout" && request.method === "GET") {
-      const headers = new Headers({ "Set-Cookie": `admin_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0` });
+      const headers = await logoutHeadersSvc();
       headers.set('Location', '/admin');
       return new Response(null, { status: 303, headers });
     }
