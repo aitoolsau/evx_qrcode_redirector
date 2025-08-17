@@ -60,3 +60,12 @@ export async function validateSession(env: Env, token: string): Promise<boolean>
 export async function logoutHeaders(): Promise<Headers> {
   return new Headers({ "Set-Cookie": `admin_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0` });
 }
+
+// Convenience guard used by route handlers
+export async function requireAuth(request: Request, env: Env): Promise<boolean> {
+  const cookie = request.headers.get('cookie') || '';
+  const m = cookie.match(/(?:^|;\s*)admin_session=([^;]+)/);
+  if (!m) return false;
+  const token = decodeURIComponent(m[1]);
+  return validateSession(env, token);
+}
