@@ -7,8 +7,9 @@ export interface Env {
   ADMIN_PASSWORD?: string; // set via wrangler secret or env var
 }
 
-// Minimal, staged refactor: import a few helpers without removing existing code yet
-import { verifyPassword as verifyPwSvc, issueSession, logoutHeaders as logoutHeadersSvc } from "./services/auth";
+// Minimal, staged refactor: import helpers without removing existing code yet
+import { verifyPassword as verifyPwSvc, issueSession, logoutHeaders as logoutHeadersSvc, validateSession } from "./services/auth";
+import { listMappings as listMappingsSvc, getMapping as getMappingSvc, setMapping as setMappingSvc, deleteMapping as deleteMappingSvc } from "./services/kv";
 
 const JSON_HEADERS = {
   "content-type": "application/json; charset=utf-8",
@@ -123,25 +124,7 @@ async function requireAuth(request: Request, env: Env): Promise<boolean> {
   const m = cookie.match(/(?:^|;\s*)admin_session=([^;]+)/);
   if (!m) return false;
   const token = decodeURIComponent(m[1]);
-  const parts = token.split('.')
-  if (parts.length !== 2) return false;
-  const [payloadB64, sig] = parts;
-  const secret = (env as any).SESSION_SECRET || env.ADMIN_PASSWORD || '';
-  if (!secret) return false;
-  if (!(await hmacVerify(secret, payloadB64, sig))) return false;
-  try {
-    const payload = JSON.parse(stringFromB64url(payloadB64));
-    const now = Math.floor(Date.now() / 1000);
-    if (!payload || typeof payload !== 'object') return false;
-    if (payload.exp && now > Number(payload.exp)) return false;
-  // Enforce session version for all protected APIs
-  const ver = await getSessionVersion(env);
-  if (payload.v === undefined) return false;
-  if (Number(payload.v) !== ver) return false;
-  return true;
-  } catch {
-    return false;
-  }
+  return validateSession(env, token);
 }
 
 function adminPage(): string {
@@ -503,14 +486,12 @@ export default {
       if (request.method === "GET") {
         const id = url.pathname.replace("/api/mappings", "").slice(1);
         if (id) {
-          const val = await env.MAPPINGS.get(id);
+      const val = await getMappingSvc(env, id);
           return val ? okJson({ key: id, url: val }) : okJson({ error: "not_found" }, { status: 404 });
         }
     const prefix = url.searchParams.get("prefix") || "";
-  const list = await env.MAPPINGS.list({ prefix });
-  // filter out internal keys
-  const filtered = list.keys.filter((k: any) => !k.name.startsWith("SESS:") && !k.name.startsWith("CONFIG:"));
-  return okJson({ keys: filtered });
+  const list = await listMappingsSvc(env, prefix);
+  return okJson(list);
       }
       if (request.method === "PUT") {
         const id = url.pathname.replace("/api/mappings", "").slice(1);
@@ -523,13 +504,13 @@ export default {
         } catch (e) {
           return okJson({ error: "invalid_url" }, { status: 400 });
         }
-        await env.MAPPINGS.put(id, target);
+    await setMappingSvc(env, id, target);
         return okJson({ ok: true, key: id, url: target });
       }
       if (request.method === "DELETE") {
         const id = url.pathname.replace("/api/mappings", "").slice(1);
         if (!id) return okJson({ error: "bad_key" }, { status: 400 });
-        await env.MAPPINGS.delete(id);
+    await deleteMappingSvc(env, id);
         return okJson({ ok: true });
       }
       return okJson({ error: "method_not_allowed" }, { status: 405 });
