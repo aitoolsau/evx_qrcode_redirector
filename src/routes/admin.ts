@@ -36,6 +36,12 @@ export function adminPage(): string {
     .card{border:1px solid #e5e7eb;border-radius:8px;padding:1rem;margin:1rem 0;background:#fff}
     table{width:100%;border-collapse:collapse}th,td{padding:.5rem;border-bottom:1px solid #f1f5f9}
     .row{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}
+  /* Modal */
+  .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;z-index:50}
+  .modal{background:#fff;max-width:520px;width:92%;border-radius:8px;box-shadow:0 10px 25px rgba(0,0,0,.15);padding:1rem}
+  .modal h3{margin:.25rem 0 0.5rem;font-size:18px}
+  .modal p{margin:.25rem 0 .75rem;color:#334155}
+  .modal .actions{display:flex;justify-content:flex-end;gap:.5rem;margin-top:.5rem}
   </style>
 </head>
 <body>
@@ -106,6 +112,19 @@ export function adminPage(): string {
       </form>
       <div class="msg">Importing will delete all existing keys and replace them with the uploaded CSV.</div>
     </section>
+    <!-- Import Confirmation Modal -->
+    <div id="importModal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="importModalTitle">
+      <div class="modal">
+        <h3 id="importModalTitle">Confirm Import</h3>
+        <p>This will delete ALL existing mappings and replace them with the CSV you selected.</p>
+        <p>A backup CSV will be downloaded first named <code>backup-YYYYMMDD_HHMMSS.csv</code> for rollback.</p>
+        <div id="importModalMsg" class="msg"></div>
+        <div class="actions">
+          <button id="importCancel" class="btn btn-secondary" type="button">Cancel</button>
+          <button id="importConfirm" class="btn btn-danger" type="button">Confirm Import</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script>
@@ -160,6 +179,36 @@ export function adminPage(): string {
       } catch(err){ msg.textContent = err.message; msg.className='msg err'; }
     });
 
+    // Import with confirmation and automatic backup
+    let pendingImportCsvText = '';
+    function ts(){
+      const d = new Date();
+      const pad = (n)=> String(n).padStart(2,'0');
+      return '' + d.getFullYear() + pad(d.getMonth()+1) + pad(d.getDate()) + '_' + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds());
+    }
+    function downloadBlob(data, filename, mime){
+      const blob = new Blob([data], { type: mime||'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url), 1000);
+    }
+    async function backupCurrent(){
+      const res = await fetch('/api/mappings?format=csv', { credentials:'include' });
+      if(!res.ok) throw new Error('Backup export failed');
+      const csv = await res.text();
+  downloadBlob(csv, 'backup-' + ts() + '.csv', 'text/csv');
+    }
+    function openImportModal(){
+      const ov = document.getElementById('importModal');
+      const mm = document.getElementById('importModalMsg');
+      mm.textContent = '';
+      ov.style.display = 'flex';
+    }
+    function closeImportModal(){
+      const ov = document.getElementById('importModal');
+      ov.style.display = 'none';
+    }
     document.getElementById('importCsvForm').addEventListener('submit', async (e)=>{
       e.preventDefault();
       const inp = document.getElementById('importCsv');
@@ -168,13 +217,36 @@ export function adminPage(): string {
       // @ts-ignore
       const file = inp && inp.files && inp.files[0];
       if (!file) { msg.textContent = 'Choose a CSV file first'; msg.className='msg err'; return; }
-      const text = await file.text();
-      try {
-        const res = await api('/api/mappings?import=csv', { method: 'POST', headers: { 'content-type': 'text/csv' }, body: text });
-        msg.textContent = 'Imported ' + (res.imported||0) + ' keys';
-        msg.className='msg ok';
+      pendingImportCsvText = await file.text();
+      openImportModal();
+    });
+    document.getElementById('importCancel').addEventListener('click', ()=>{
+      pendingImportCsvText = '';
+      closeImportModal();
+    });
+    document.getElementById('importConfirm').addEventListener('click', async ()=>{
+      const modalMsg = document.getElementById('importModalMsg');
+      const pageMsg = document.getElementById('import-msg');
+      modalMsg.textContent = 'Creating backup...'; modalMsg.className='msg';
+      try{
+        await backupCurrent();
+      } catch(err){
+        modalMsg.textContent = 'Backup failed: ' + (err && err.message ? err.message : 'unknown error');
+        modalMsg.className='msg err';
+        return; // Abort import if backup failed
+      }
+      modalMsg.textContent = 'Importing...';
+      try{
+        const res = await api('/api/mappings?import=csv', { method: 'POST', headers: { 'content-type': 'text/csv' }, body: pendingImportCsvText });
+        pageMsg.textContent = 'Imported ' + (res.imported||0) + ' keys';
+        pageMsg.className='msg ok';
+        closeImportModal();
+        pendingImportCsvText = '';
         await loadList();
-      } catch(err){ msg.textContent = err.message || 'Import failed'; msg.className='msg err'; }
+      } catch(err){
+        modalMsg.textContent = (err && err.message) ? err.message : 'Import failed';
+        modalMsg.className='msg err';
+      }
     });
 
     document.getElementById('pwform').addEventListener('submit', async (e)=>{
