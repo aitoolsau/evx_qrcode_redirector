@@ -3,6 +3,8 @@
 ## What is it?
 The EVX QR Redirector is a Cloudflare Worker that ensures QR code and short-link URLs for EVX charging stations always resolve to the correct destination, regardless of how users access them. It provides a seamless, reliable experience for drivers and enables flexible, future-proof management for the business.
 
+It also includes a secure, lightweight admin console to manage chargerID→URL overrides in real time via Cloudflare KV, so business users can add, update, or remove mappings without code changes.
+
 ## How does it work?
 - **Smart Redirection:**
   - When a user scans a QR code or visits a short URL like `https://cpr.evx.tech/public/cs/20501B`, the Worker intercepts the request.
@@ -13,6 +15,11 @@ The EVX QR Redirector is a Cloudflare Worker that ensures QR code and short-link
   - The Worker will not redirect if the request is already for the QR endpoint or if the special identifier is already present, preventing infinite loops and unnecessary processing.
   - Invalid or malformed requests are safely ignored or return a simple error, ensuring only legitimate traffic is processed.
 
+- **Admin Console & Dynamic Mappings:**
+  - Authenticated admins can visit `https://cpr.evx.tech/admin` to view and manage chargerID→URL mappings stored in Cloudflare KV.
+  - The console supports filtering, Add/Update/Delete operations, and applies changes instantly worldwide.
+  - Login is handled server-side (`/login`) and uses a stateless HMAC-signed session cookie for reliability.
+
 ## Why is this valuable?
 - **Business Reliability:**
   - QR codes and short links printed on hardware or signage will always work, even if the backend or app URLs change in the future.
@@ -20,7 +27,7 @@ The EVX QR Redirector is a Cloudflare Worker that ensures QR code and short-link
 
 - **Security & Control:**
   - Only valid, expected requests are processed. All others are ignored, reducing risk of abuse.
-  - Logic is managed centrally in Cloudflare, so changes are instant and global.
+  - Admin access requires username and password; sessions are signed and time-limited. Logic and mappings are managed centrally in Cloudflare, so changes are instant and global.
 
 - **Scalability:**
   - The system is serverless and globally distributed, so it can handle any scale of user traffic with no performance bottlenecks.
@@ -39,6 +46,13 @@ Below is a sample QR code that demonstrates the redirector in action:
 4. The redirector will automatically forward you to:
   - `https://cp.evx.tech/public/cs/qr?evseid=AU*EVX*20501B`
 5. Confirm that the final URL in your browser matches the expected format and that the page loads successfully.
+
+### How to test the Admin Console
+1. Open `https://cpr.evx.tech/admin` and log in with your admin credentials.
+2. Use the filter to narrow keys; press Enter to refresh the list.
+3. Add a mapping by entering a Charger ID and Target URL, then click Add Mapping.
+4. Click Edit on an existing mapping to prefill and Update Mapping.
+5. Delete mappings as needed; changes take effect immediately in production.
 
 **Note:**
 - If you want to test with other charger IDs, simply change the last part of the URL before scanning or entering it in your browser.

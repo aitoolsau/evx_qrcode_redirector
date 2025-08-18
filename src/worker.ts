@@ -1,18 +1,67 @@
-export interface Env {
-  COUNTRY_CODE?: string; // default AU
-}
+import { okJson, unauthorized, html } from "./lib/http";
+import { Env } from "./env";
+import { handleAdmin } from "./routes/admin";
+import { handleLoginForm, handleApiLoginJson, handleApiMe, handleApiLogoutPost, handleLogoutGet } from "./routes/auth";
+import { handlePasswordGet, handlePasswordPost } from "./routes/password";
+import { handleMappings } from "./routes/mappings";
+import { handleDebugConfig } from "./routes/debug";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    const url = new URL(request.url);
+    try {
+      const url = new URL(request.url);
 
     // Only host cpr.evx.tech
     if (url.hostname !== "cpr.evx.tech") {
       return new Response("Not found", { status: 404 });
     }
 
-    // Prevent redirect loop: do not redirect /public/cs/qr, if 'revseid' is present, or if chargerID is 'qr'
-    if (url.pathname === "/public/cs/qr" || url.searchParams.has("evseid")) {
+    // Admin UI & APIs
+    if (url.pathname === "/admin") {
+      return handleAdmin();
+    }
+
+    // Auth-related endpoints
+    if (url.pathname === "/login" && request.method === "POST") {
+      return handleLoginForm(request, env as any, url);
+    }
+    if (url.pathname === "/api/me") {
+      return handleApiMe(request, env as any, url);
+    }
+    if (url.pathname === "/api/login" && request.method === "POST") {
+      return handleApiLoginJson(request, env as any);
+    }
+    if (url.pathname === "/api/password" && request.method === "GET") {
+      return handlePasswordGet(request, env as any);
+    }
+    if (url.pathname === "/api/password" && request.method === "POST") {
+      return handlePasswordPost(request, env as any);
+    }
+    if (url.pathname === "/api/logout" && request.method === "POST") {
+      return handleApiLogoutPost();
+    }
+
+    // GET /logout helper for client redirects
+    if (url.pathname === "/logout" && request.method === "GET") {
+      return handleLogoutGet();
+    }
+
+    // Authenticated debug to check CONFIG state
+    if (url.pathname === "/api/debug/config" && request.method === "GET") {
+      return handleDebugConfig(request, env as any);
+    }
+
+    // Mappings CRUD (auth required)
+    if (url.pathname.startsWith("/api/mappings")) {
+      return handleMappings(request, env as any, url);
+    }
+
+    // Prevent redirect loop: do not redirect /public/cs/qr, or if query already includes identifiers
+    if (
+      url.pathname === "/public/cs/qr" ||
+      url.searchParams.has("evseid") ||
+      url.searchParams.has("revseid")
+    ) {
       return new Response("OK", { status: 200 });
     }
 
@@ -22,13 +71,24 @@ export default {
       return new Response("Not found", { status: 404 });
     }
 
-    const chargerId = m[1];
-    const cc = (env.COUNTRY_CODE || "AU").toUpperCase();
+  const chargerId = m[1].toUpperCase();
 
-    const dest = new URL("https://cp.evx.tech/public/cs/qr");
-    dest.searchParams.set("evseid", `${cc}*EVX*${chargerId}`);
+    // Prefer explicit mapping from KV; if missing, show message then forward to origin URL
+    const existing = await env.MAPPINGS.get(chargerId);
+    if (!existing) {
+      const originUrl = `https://cp.evx.tech/public/cs/${chargerId}`;
+      const body = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="3;url=${originUrl}"><title>Not found</title></head><body style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif; padding:2rem;">
+<p>Charge ID not found in mapping file. Forward to origin URL</p>
+<p><a href="${originUrl}">Continue to ${originUrl}</a> (in 3 seconds)</p>
+</body></html>`;
+      return html(body, { status: 404 });
+    }
 
-    // 302 for QR flows
-    return Response.redirect(dest.toString(), 302);
+      return Response.redirect(existing, 302);
+    } catch (err: any) {
+      try { console.error('Unhandled worker error:', err && (err.stack || err.message || String(err))); } catch {}
+      const msg = (err && (err.message || String(err))) || 'internal_error';
+      return okJson({ error: 'internal_error', message: msg }, { status: 500 });
+    }
   },
-} satisfies ExportedHandler<Env>;
+};
