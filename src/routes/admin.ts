@@ -18,11 +18,20 @@ export function adminPage(): string {
     input{width:100%;padding:8px;border:1px solid #8c8f94;border-radius:3px;background:#fff}
   /* Add a slight extra right margin on login inputs to balance spacing */
   #login input{margin-right:8px;width:calc(100% - 8px)}
-    .button-primary{background:#2271b1;border-color:#2271b1;color:#fff;text-decoration:none;text-shadow:none;padding:8px 14px;border-radius:3px;border:1px solid transparent;cursor:pointer;display:inline-block;margin-top:12px}
-    .button-primary:hover{background:#135e96}
+    /* Unified button system */
+    .btn, .button-primary{display:inline-block;padding:8px 14px;border-radius:3px;border:1px solid transparent;cursor:pointer;text-decoration:none;text-shadow:none;font-size:14px;line-height:1.2}
+    .btn + .btn{margin-left:6px}
+    .btn-primary, .button-primary{background:#2271b1;border-color:#2271b1;color:#fff}
+    .btn-primary:hover, .button-primary:hover{background:#135e96}
+    .btn-secondary{background:#f3f4f6;border-color:#e5e7eb;color:#1f2937}
+    .btn-secondary:hover{background:#e5e7eb}
+    .btn-danger{background:#d63638;border-color:#d63638;color:#fff}
+    .btn-danger:hover{background:#b82a2c}
     .msg{margin-top:8px;font-size:12px;color:#646970}
     .ok{color:#1e7e34}.err{color:#b32d2e}
     header{max-width:880px;margin:1rem auto;padding:0 1rem;display:flex;justify-content:space-between;align-items:center}
+  .brand{display:flex;align-items:center;gap:.5rem}
+  .brand-logo{height:28px;width:auto}
     .app-wrap{max-width:880px;margin:1rem auto;padding:0 1rem}
     .card{border:1px solid #e5e7eb;border-radius:8px;padding:1rem;margin:1rem 0;background:#fff}
     table{width:100%;border-collapse:collapse}th,td{padding:.5rem;border-bottom:1px solid #f1f5f9}
@@ -39,28 +48,34 @@ export function adminPage(): string {
         <input id="user" name="user" autocomplete="username" required />
         <label for="pass">Password</label>
         <input id="pass" name="pass" type="password" autocomplete="current-password" required />
-        <button class="button-primary" type="submit">Log In</button>
+  <button class="btn btn-primary" type="submit">Log In</button>
         <div id="login-msg" class="msg"></div>
       </form>
     </div>
   </div>
 
   <div id="app" class="app-wrap" style="display:none">
-    <header><h1>EVX QR Redirector Admin</h1><button id="logout" class="button-primary" style="background:#d63638">Logout</button></header>
+    <header>
+      <div class="brand">
+        <img class="brand-logo" src="https://evx.tech/wp-content/uploads/2022/05/EVX-Logo-1.png" alt="EVX" />
+        <h1> QR Redirector Admin</h1>
+      </div>
+  <button id="logout" class="btn btn-danger">Logout</button>
+    </header>
     <section class="card">
       <h2>Create / Update Mapping</h2>
       <form id="upsert">
         <div class="row"><label for="cid">Charger ID</label><input id="cid" placeholder="20501B" required /></div>
         <div class="row"><label for="url">Target URL</label><input id="url" placeholder="https://cp.evx.tech/public/cs/qr?evseid=AU*EVX*20501B" required /></div>
         <div class="row">
-          <button id="save-btn" class="button-primary" type="submit">Add Mapping</button>
-          <button id="clear-btn" type="button">Clear</button>
+          <button id="save-btn" class="btn btn-primary" type="submit">Add Mapping</button>
+          <button id="clear-btn" class="btn btn-secondary" type="button">Clear</button>
         </div>
         <div id="save-msg" class="msg"></div>
       </form>
     </section>
     <section class="card">
-      <div class="row"><input id="prefix" placeholder="Filter by prefix (optional)" /><button id="refresh" class="button-primary" type="button">Refresh</button></div>
+  <div class="row"><input id="prefix" placeholder="Filter by prefix (optional)" /><button id="refresh" class="btn btn-secondary" type="button">Refresh</button></div>
   <table id="list"><thead><tr><th>Key</th><th>Value</th><th style="width:160px">Actions</th></tr></thead><tbody></tbody></table>
     </section>
 
@@ -70,11 +85,26 @@ export function adminPage(): string {
         <div class="row"><label for="pw_current">Current Password</label><input id="pw_current" type="password" autocomplete="current-password" required /></div>
         <div class="row"><label for="pw_new">New Password</label><input id="pw_new" type="password" autocomplete="new-password" required /></div>
         <div class="row"><label for="pw_confirm">Confirm New Password</label><input id="pw_confirm" type="password" autocomplete="new-password" required /></div>
-        <button class="button-primary" type="submit">Update Password</button>
+  <button class="btn btn-primary" type="submit">Update Password</button>
         <div id="pw-msg" class="msg"></div>
       </form>
   <div id="pw-meta" class="msg"></div>
   <div class="msg">Note: Password changes take effect immediately. Your current session remains valid.</div>
+    </section>
+    <section class="card">
+      <h2>Import / Export</h2>
+      <div class="row" style="margin-bottom:.5rem">
+  <a id="exportCsv" class="btn btn-secondary" href="/api/mappings?format=csv" download>Export CSV</a>
+      </div>
+      <form id="importCsvForm">
+        <div class="row">
+          <label for="importCsv">Import CSV (key,url)</label>
+          <input id="importCsv" type="file" accept=".csv,text/csv" />
+        </div>
+  <div class="row"><button class="btn btn-danger" type="submit">Import & Replace All</button></div>
+        <div id="import-msg" class="msg"></div>
+      </form>
+      <div class="msg">Importing will delete all existing keys and replace them with the uploaded CSV.</div>
     </section>
   </div>
 
@@ -130,6 +160,23 @@ export function adminPage(): string {
       } catch(err){ msg.textContent = err.message; msg.className='msg err'; }
     });
 
+    document.getElementById('importCsvForm').addEventListener('submit', async (e)=>{
+      e.preventDefault();
+      const inp = document.getElementById('importCsv');
+      const msg = document.getElementById('import-msg');
+      msg.textContent=''; msg.className='msg';
+      // @ts-ignore
+      const file = inp && inp.files && inp.files[0];
+      if (!file) { msg.textContent = 'Choose a CSV file first'; msg.className='msg err'; return; }
+      const text = await file.text();
+      try {
+        const res = await api('/api/mappings?import=csv', { method: 'POST', headers: { 'content-type': 'text/csv' }, body: text });
+        msg.textContent = 'Imported ' + (res.imported||0) + ' keys';
+        msg.className='msg ok';
+        await loadList();
+      } catch(err){ msg.textContent = err.message || 'Import failed'; msg.className='msg err'; }
+    });
+
     document.getElementById('pwform').addEventListener('submit', async (e)=>{
       e.preventDefault();
       const cur = (document.getElementById('pw_current')).value;
@@ -177,15 +224,20 @@ export function adminPage(): string {
       const tbody = document.querySelector('#list tbody');
       tbody.innerHTML = '';
       for(const item of data.keys){
-        const tr = document.createElement('tr');
-        const val = await api('/api/mappings/'+encodeURIComponent(item.name));
-        tr.innerHTML = '<td><code>'+ item.name +'</code></td>'+
-                       '<td><a href="'+ val.url +'" target="_blank">'+ val.url +'</a></td>'+
-                       '<td>'+
-                         '<button data-action="edit" data-k="'+ item.name +'" style="margin-right:6px">Edit</button>'+
-                         '<button data-action="delete" data-k="'+ item.name +'">Delete</button>'+
-                       '</td>';
-        tbody.appendChild(tr);
+        try {
+          const tr = document.createElement('tr');
+          const val = await api('/api/mappings/'+encodeURIComponent(item.name));
+          tr.innerHTML = '<td><code>'+ item.name +'</code></td>'+
+                         '<td><a href="'+ val.url +'" target="_blank">'+ val.url +'</a></td>'+
+                         '<td>'+
+                           '<button class="btn btn-secondary" data-action="edit" data-k="'+ item.name +'">Edit</button>'+
+                           '<button class="btn btn-danger" data-action="delete" data-k="'+ item.name +'">Delete</button>'+
+                         '</td>';
+          tbody.appendChild(tr);
+        } catch(e){
+          // Key may have been deleted/changed concurrently (e.g., during import). Skip it.
+          continue;
+        }
       }
       // Single persistent click handler each time loadList is called (plain JS)
       tbody.onclick = async (e)=>{

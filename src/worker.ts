@@ -1,4 +1,4 @@
-import { okJson, unauthorized } from "./lib/http";
+import { okJson, unauthorized, html } from "./lib/http";
 import { Env } from "./env";
 import { handleAdmin } from "./routes/admin";
 import { handleLoginForm, handleApiLoginJson, handleApiMe, handleApiLogoutPost, handleLogoutGet } from "./routes/auth";
@@ -71,18 +71,20 @@ export default {
       return new Response("Not found", { status: 404 });
     }
 
-    const chargerId = m[1];
+  const chargerId = m[1].toUpperCase();
 
-    // Prefer explicit mapping from KV; fall back to computed URL format
-    let target = await env.MAPPINGS.get(chargerId);
-    if (!target) {
-      const cc = (env.COUNTRY_CODE || "AU").toUpperCase();
-      const dest = new URL("https://cpr.evx.tech/public/cs/qr");
-      dest.searchParams.set("evseid", `${cc}*EVX*${chargerId}`);
-      target = dest.toString();
+    // Prefer explicit mapping from KV; if missing, show message then forward to origin URL
+    const existing = await env.MAPPINGS.get(chargerId);
+    if (!existing) {
+      const originUrl = `https://cp.evx.tech/public/cs/${chargerId}`;
+      const body = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="3;url=${originUrl}"><title>Not found</title></head><body style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif; padding:2rem;">
+<p>Charge ID not found in mapping file. Forward to origin URL</p>
+<p><a href="${originUrl}">Continue to ${originUrl}</a> (in 3 seconds)</p>
+</body></html>`;
+      return html(body, { status: 404 });
     }
 
-      return Response.redirect(target, 302);
+      return Response.redirect(existing, 302);
     } catch (err: any) {
       try { console.error('Unhandled worker error:', err && (err.stack || err.message || String(err))); } catch {}
       const msg = (err && (err.message || String(err))) || 'internal_error';

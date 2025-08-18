@@ -39,3 +39,16 @@ export async function listMappings(env: Env, prefix = "") {
   const filtered = list.keys.filter((k: any) => !k.name.startsWith("SESS:") && !k.name.startsWith("CONFIG:"));
   return { keys: filtered };
 }
+
+// List all non-config/session mapping keys with pagination support
+export async function listAllMappings(env: Env): Promise<Array<{ name: string }>> {
+  const page = await env.MAPPINGS.list();
+  return page.keys.filter((k: any) => !k.name.startsWith("SESS:") && !k.name.startsWith("CONFIG:"));
+}
+
+// Delete all non-config/session mapping keys
+export async function wipeMappings(env: Env): Promise<void> {
+  const page = await env.MAPPINGS.list();
+  const toDelete = page.keys.filter(k => !k.name.startsWith("SESS:") && !k.name.startsWith("CONFIG:"));
+  await Promise.all(toDelete.map(k => env.MAPPINGS.delete(k.name)));
+}
