@@ -23,7 +23,7 @@ export default {
     }
 
     // Admin UI & APIs
-    if (isCpr && url.pathname === "/admin") {
+  if (isCpr && url.pathname === "/urlmapping") {
       return handleAdmin();
     }
 

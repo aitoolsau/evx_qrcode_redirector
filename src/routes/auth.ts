@@ -21,10 +21,10 @@ export async function handleLoginForm(request: Request, env: Env, url: URL): Pro
   const uOk = (env.ADMIN_USERNAME || 'admin') === user;
   const mod = await import("../services/auth");
   const pOk = await mod.verifyPassword(env, pass);
-  if (!uOk || !pOk) return html('<script>location.href="/admin?login=failed"</script>', { status: 401 });
+  if (!uOk || !pOk) return html('<script>location.href="/urlmapping?login=failed"</script>', { status: 401 });
   const token = await issueSession(env, user);
   const headers = new Headers({ "Set-Cookie": `admin_session=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=3600` });
-  const rd = url.searchParams.get('redirect_to') || '/admin';
+  const rd = url.searchParams.get('redirect_to') || '/urlmapping';
   headers.set('Location', rd);
   return new Response(null, { status: 303, headers });
 }
@@ -77,6 +77,6 @@ export async function handleApiLogoutPost(): Promise<Response> {
 
 export async function handleLogoutGet(): Promise<Response> {
   const headers = await logoutHeaders();
-  headers.set('Location', '/admin');
+  headers.set('Location', '/urlmapping');
   return new Response(null, { status: 303, headers });
 }

@@ -5,7 +5,7 @@ account_id = "e04143feff1d545d4700b6406cccff9f"
 
 routes = [
   { pattern = "cpr.evx.tech/public/cs/*", zone_name = "evx.tech" }
-  ,{ pattern = "cpr.evx.tech/admin*", zone_name = "evx.tech" }
+  ,{ pattern = "cpr.evx.tech/urlmapping*", zone_name = "evx.tech" }
   ,{ pattern = "cpr.evx.tech/login", zone_name = "evx.tech" }
   ,{ pattern = "cpr.evx.tech/api/*", zone_name = "evx.tech" }
   ,{ pattern = "cpr.evx.tech/logout", zone_name = "evx.tech" }
