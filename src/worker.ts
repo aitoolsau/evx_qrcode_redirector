@@ -11,48 +11,51 @@ export default {
     try {
       const url = new URL(request.url);
 
-    // Only host cpr.evx.tech
-    if (url.hostname !== "cpr.evx.tech") {
+    // Allow public redirect endpoints on both cpr.evx.tech and cp.evx.tech.
+    // Admin & API (auth) remain only on cpr.evx.tech.
+    const isCpr = url.hostname === "cpr.evx.tech";
+    const isCp = url.hostname === "cp.evx.tech";
+    if (!isCpr && !isCp) {
       return new Response("Not found", { status: 404 });
     }
 
     // Admin UI & APIs
-    if (url.pathname === "/admin") {
+    if (isCpr && url.pathname === "/admin") {
       return handleAdmin();
     }
 
     // Auth-related endpoints
-    if (url.pathname === "/login" && request.method === "POST") {
+  if (isCpr && url.pathname === "/login" && request.method === "POST") {
       return handleLoginForm(request, env as any, url);
     }
-    if (url.pathname === "/api/me") {
+  if (isCpr && url.pathname === "/api/me") {
       return handleApiMe(request, env as any, url);
     }
-    if (url.pathname === "/api/login" && request.method === "POST") {
+  if (isCpr && url.pathname === "/api/login" && request.method === "POST") {
       return handleApiLoginJson(request, env as any);
     }
-    if (url.pathname === "/api/password" && request.method === "GET") {
+  if (isCpr && url.pathname === "/api/password" && request.method === "GET") {
       return handlePasswordGet(request, env as any);
     }
-    if (url.pathname === "/api/password" && request.method === "POST") {
+  if (isCpr && url.pathname === "/api/password" && request.method === "POST") {
       return handlePasswordPost(request, env as any);
     }
-    if (url.pathname === "/api/logout" && request.method === "POST") {
+  if (isCpr && url.pathname === "/api/logout" && request.method === "POST") {
       return handleApiLogoutPost();
     }
 
     // GET /logout helper for client redirects
-    if (url.pathname === "/logout" && request.method === "GET") {
+  if (isCpr && url.pathname === "/logout" && request.method === "GET") {
       return handleLogoutGet();
     }
 
     // Authenticated debug to check CONFIG state
-    if (url.pathname === "/api/debug/config" && request.method === "GET") {
+  if (isCpr && url.pathname === "/api/debug/config" && request.method === "GET") {
       return handleDebugConfig(request, env as any);
     }
 
     // Mappings CRUD (auth required)
-    if (url.pathname.startsWith("/api/mappings")) {
+  if (isCpr && url.pathname.startsWith("/api/mappings")) {
       return handleMappings(request, env as any, url);
     }
 
@@ -76,7 +79,8 @@ export default {
     // Prefer explicit mapping from KV; if missing, show message then forward to origin URL
     const existing = await env.MAPPINGS.get(chargerId);
     if (!existing) {
-      const originUrl = `https://cp.evx.tech/public/cs/${chargerId}`;
+      const originHost = env.ORIGIN_HOST || 'evx.au.charge.ampeco.tech';
+      const originUrl = `https://${originHost}/public/cs/${chargerId}`;
       const body = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="3;url=${originUrl}"><title>Not found</title></head><body style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif; padding:2rem;">
 <p>Charge ID not found in mapping file. Forward to origin URL</p>
 <p><a href="${originUrl}">Continue to ${originUrl}</a> (in 3 seconds)</p>
