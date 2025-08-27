@@ -11,6 +11,8 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     try {
       const url = new URL(request.url);
+  const ray = request.headers.get('cf-ray') || 'no-ray';
+  try { console.log('[REQ]', ray, request.method, url.toString()); } catch {}
 
     // Allow public redirect endpoints on both cpr.evx.tech and cp.evx.tech.
     // Admin & API (auth) remain only on cpr.evx.tech.
@@ -102,6 +104,7 @@ export default {
       resp.headers.set('X-EVX-Mapping', 'miss');
       resp.headers.set('X-EVX-Key', chargerId);
       resp.headers.set('X-EVX-Host', url.hostname);
+      resp.headers.set('X-EVX-Ray', ray);
       return resp;
     }
 
@@ -109,11 +112,15 @@ export default {
         'Location': existing,
         'X-EVX-Mapping': 'hit',
         'X-EVX-Key': chargerId,
-        'X-EVX-Host': url.hostname
+        'X-EVX-Host': url.hostname,
+        'X-EVX-Ray': ray
       });
       return new Response(null, { status: 302, headers: redirectHeaders });
     } catch (err: any) {
-      try { console.error('Unhandled worker error:', err && (err.stack || err.message || String(err))); } catch {}
+      try {
+        const msg = err && (err.stack || err.message || String(err));
+        console.error('[ERR]', request.headers.get('cf-ray') || 'no-ray', msg);
+      } catch {}
       const msg = (err && (err.message || String(err))) || 'internal_error';
       return okJson({ error: 'internal_error', message: msg }, { status: 500 });
     }
