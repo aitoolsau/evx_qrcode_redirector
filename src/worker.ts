@@ -105,11 +105,13 @@ export default {
       return resp;
     }
 
-      const redirectResp = Response.redirect(existing, 302);
-      redirectResp.headers.set('X-EVX-Mapping', 'hit');
-      redirectResp.headers.set('X-EVX-Key', chargerId);
-      redirectResp.headers.set('X-EVX-Host', url.hostname);
-      return redirectResp;
+      const redirectHeaders = new Headers({
+        'Location': existing,
+        'X-EVX-Mapping': 'hit',
+        'X-EVX-Key': chargerId,
+        'X-EVX-Host': url.hostname
+      });
+      return new Response(null, { status: 302, headers: redirectHeaders });
     } catch (err: any) {
       try { console.error('Unhandled worker error:', err && (err.stack || err.message || String(err))); } catch {}
       const msg = (err && (err.message || String(err))) || 'internal_error';
