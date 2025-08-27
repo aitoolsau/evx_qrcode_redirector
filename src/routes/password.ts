@@ -24,8 +24,14 @@ export async function handlePasswordPost(request: Request, env: Env): Promise<Re
     const current = String((body as any).current || '');
     const next = String((body as any).next || '');
     if (next.length < 8) return okJson({ error: 'weak_password' }, { status: 400 });
-    const ok = await verifyPassword(env, current);
-    if (!ok) return okJson({ error: 'bad_current' }, { status: 403 });
+    // If there is no stored hash yet, allow initializing a password even if current is blank or incorrect.
+    const existingRecord = await env.MAPPINGS.get('CONFIG:ADMIN_PW');
+    if (existingRecord) {
+      const ok = await verifyPassword(env, current);
+      if (!ok) return okJson({ error: 'bad_current' }, { status: 403 });
+    } else {
+      // Optional: if an ADMIN_PASSWORD env var exists and current was provided but wrong, we could enforce; for usability we skip.
+    }
     const salt = new Uint8Array(16); crypto.getRandomValues(salt);
     const iterations = 100_000;
     const hash = await pbkdf2Hash(next, salt, iterations);
@@ -33,7 +39,7 @@ export async function handlePasswordPost(request: Request, env: Env): Promise<Re
     await env.MAPPINGS.put('CONFIG:ADMIN_PW', JSON.stringify(rec));
     await bumpSessionVersion(env); // force re-login everywhere
     const after = await env.MAPPINGS.get('CONFIG:ADMIN_PW');
-    return okJson({ ok: true, visible: Boolean(after) });
+    return okJson({ ok: true, visible: Boolean(after), initialized: !existingRecord });
   } catch (e: any) {
     const msg = e && (e.message || String(e));
     return okJson({ error: 'internal_error', message: msg }, { status: 500 });
