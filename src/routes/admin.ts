@@ -42,6 +42,10 @@ export function adminPage(): string {
   .modal h3{margin:.25rem 0 0.5rem;font-size:18px}
   .modal p{margin:.25rem 0 .75rem;color:#334155}
   .modal .actions{display:flex;justify-content:flex-end;gap:.5rem;margin-top:.5rem}
+  /* Spinner */
+  .spinner{width:28px;height:28px;border:4px solid #e5e7eb;border-top-color:#2271b1;border-radius:50%;animation:spin 0.8s linear infinite;margin:.5rem auto}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .loading-inline{display:inline-flex;align-items:center;gap:.5rem}
   </style>
 </head>
 <body>
@@ -127,6 +131,7 @@ export function adminPage(): string {
         <p>This will delete ALL existing mappings and replace them with the CSV you selected.</p>
         <p>A backup CSV will be downloaded first named <code>backup-YYYYMMDD_HHMMSS.csv</code> for rollback.</p>
         <div id="importModalMsg" class="msg"></div>
+  <div id="importSpinner" class="spinner" style="display:none"></div>
         <div class="actions">
           <button id="importCancel" class="btn btn-secondary" type="button">Cancel</button>
           <button id="importConfirm" class="btn btn-danger" type="button">Confirm Import</button>
@@ -252,15 +257,21 @@ export function adminPage(): string {
     document.getElementById('importConfirm').addEventListener('click', async ()=>{
       const modalMsg = document.getElementById('importModalMsg');
       const pageMsg = document.getElementById('import-msg');
-      modalMsg.textContent = 'Creating backup...'; modalMsg.className='msg';
+      const spin = document.getElementById('importSpinner');
+      const confirmBtn = document.getElementById('importConfirm');
+      const cancelBtn = document.getElementById('importCancel');
+      function startSpin(txt){ modalMsg.textContent = txt; spin.style.display='block'; confirmBtn.disabled=true; cancelBtn.disabled=true; }
+      function stopSpin(){ spin.style.display='none'; confirmBtn.disabled=false; cancelBtn.disabled=false; }
+      startSpin('Creating backup...'); modalMsg.className='msg';
       try{
         await backupCurrent();
       } catch(err){
+        stopSpin();
         modalMsg.textContent = 'Backup failed: ' + (err && err.message ? err.message : 'unknown error');
         modalMsg.className='msg err';
         return; // Abort import if backup failed
       }
-      modalMsg.textContent = 'Importing...';
+      startSpin('Importing...');
       try{
         const res = await api('/api/mappings?import=csv', { method: 'POST', headers: { 'content-type': 'text/csv' }, body: pendingImportCsvText });
         pageMsg.textContent = 'Imported ' + (res.imported||0) + ' keys';
@@ -269,9 +280,12 @@ export function adminPage(): string {
         pendingImportCsvText = '';
         await loadList();
       } catch(err){
+        stopSpin();
         modalMsg.textContent = (err && err.message) ? err.message : 'Import failed';
         modalMsg.className='msg err';
+        confirmBtn.disabled=false; cancelBtn.disabled=false;
       }
+      stopSpin();
     });
 
     document.getElementById('pwform').addEventListener('submit', async (e)=>{
