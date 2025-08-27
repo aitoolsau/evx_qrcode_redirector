@@ -98,10 +98,18 @@ export default {
 <p>Charge ID not found in mapping file. Forward to origin URL</p>
 <p><a href="${originUrl}">Continue to ${originUrl}</a> (in 3 seconds)</p>
 </body></html>`;
-      return html(body, { status: 404 });
+      const resp = html(body, { status: 404 });
+      resp.headers.set('X-EVX-Mapping', 'miss');
+      resp.headers.set('X-EVX-Key', chargerId);
+      resp.headers.set('X-EVX-Host', url.hostname);
+      return resp;
     }
 
-      return Response.redirect(existing, 302);
+      const redirectResp = Response.redirect(existing, 302);
+      redirectResp.headers.set('X-EVX-Mapping', 'hit');
+      redirectResp.headers.set('X-EVX-Key', chargerId);
+      redirectResp.headers.set('X-EVX-Host', url.hostname);
+      return redirectResp;
     } catch (err: any) {
       try { console.error('Unhandled worker error:', err && (err.stack || err.message || String(err))); } catch {}
       const msg = (err && (err.message || String(err))) || 'internal_error';
