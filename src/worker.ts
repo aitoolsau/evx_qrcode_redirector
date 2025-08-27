@@ -5,6 +5,7 @@ import { handleLoginForm, handleApiLoginJson, handleApiMe, handleApiLogoutPost, 
 import { handlePasswordGet, handlePasswordPost } from "./routes/password";
 import { handleMappings } from "./routes/mappings";
 import { handleDebugConfig } from "./routes/debug";
+import { handleHealth } from "./routes/health";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -52,6 +53,11 @@ export default {
     // Authenticated debug to check CONFIG state
   if (isCpr && url.pathname === "/api/debug/config" && request.method === "GET") {
       return handleDebugConfig(request, env as any);
+    }
+
+    // Health endpoint (exposed only on cpr host for admin use)
+    if (isCpr && url.pathname === "/api/health" && request.method === "GET") {
+      return handleHealth(env as any);
     }
 
     // Mappings CRUD (auth required)

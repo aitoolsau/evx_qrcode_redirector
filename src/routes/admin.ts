@@ -112,6 +112,14 @@ export function adminPage(): string {
       </form>
       <div class="msg">Importing will delete all existing keys and replace them with the uploaded CSV.</div>
     </section>
+    <section class="card" id="health-card">
+      <h2>System Health</h2>
+      <div id="health-status" class="msg">Loading...</div>
+      <div id="health-details" style="font-size:12px;color:#334155;margin-top:.25rem"></div>
+      <div class="row" style="margin-top:.5rem">
+        <button id="health-refresh" type="button" class="btn btn-secondary">Refresh Health</button>
+      </div>
+    </section>
     <!-- Import Confirmation Modal -->
     <div id="importModal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="importModalTitle">
       <div class="modal">
@@ -142,11 +150,28 @@ export function adminPage(): string {
         document.getElementById('login').style.display='none';
         document.getElementById('app').style.display='block';
   loadPwMeta().catch(()=>{});
+  loadHealth().catch(()=>{});
       } catch {
         document.getElementById('login').style.display='block';
         document.getElementById('app').style.display='none';
       }
     }
+    async function loadHealth(){
+      const el = document.getElementById('health-status');
+      const details = document.getElementById('health-details');
+      try {
+        el.textContent = 'Loading...';
+        const h = await api('/api/health');
+        el.textContent = 'Overall: ' + h.status;
+        details.textContent = 'KV: ' + h.components.kv + ' • Latency: ' + h.latencyMs + 'ms • Keys sample: ' + h.sampleKeys + ' • ' + h.time;
+        el.className = 'msg ' + (h.status === 'ok' ? 'ok' : (h.status === 'degraded' ? '' : 'err'));
+      } catch(e){
+        el.textContent = 'Health check failed';
+        el.className = 'msg err';
+        details.textContent = '';
+      }
+    }
+    document.getElementById('health-refresh').addEventListener('click', ()=>loadHealth());
   // No JS login submit handler; the form POSTs to /login which sets cookie and redirects.
   document.getElementById('logout').addEventListener('click', async ()=>{ window.location.href = '/logout'; });
     document.getElementById('refresh').addEventListener('click', loadList);
