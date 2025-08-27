@@ -65,12 +65,19 @@ export default {
       return handleMappings(request, env as any, url);
     }
 
-    // Prevent redirect loop: do not redirect /public/cs/qr, or if query already includes identifiers
+    // Bypass /public/cs/qr (final app page) or when already has identifiers.
+    // For cp.evx.tech we want to escape the Worker and reach the upstream AMPECO app, so we redirect to ORIGIN_HOST.
     if (
       url.pathname === "/public/cs/qr" ||
       url.searchParams.has("evseid") ||
       url.searchParams.has("revseid")
     ) {
+      if (isCp) {
+        const originHost = env.ORIGIN_HOST || 'evx.au.charge.ampeco.tech';
+        const target = `https://${originHost}${url.pathname}${url.search}`;
+        return Response.redirect(target, 302);
+      }
+      // On cpr host keep simple OK to avoid loops / unnecessary work
       return new Response("OK", { status: 200 });
     }
 
