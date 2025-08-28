@@ -2,13 +2,22 @@ import { okJson, unauthorized } from "../lib/http";
 import { bytesToB64url } from "../lib/base64";
 import { pbkdf2Hash } from "../lib/crypto";
 import { Env } from "../env";
-import { requireAuth, verifyPassword, issueSession } from "../services/auth";
+import { requireAuth, verifyPassword, issueSession, validateSessionDetailed } from "../services/auth";
 import { bumpSessionVersion } from "../services/kv";
 
 export async function handlePasswordGet(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const debug = url.searchParams.get('debug') === '1';
-  if (!(await requireAuth(request, env))) return debug ? okJson({ error: 'unauthorized', reason: 'not_authenticated' }, { status: 401 }) : unauthorized();
+  if (debug) {
+    const cookie = request.headers.get('cookie') || '';
+    const m = cookie.match(/(?:^|;\s*)admin_session=([^;]+)/);
+    if (!m) return okJson({ error: 'unauthorized', reason: 'no_cookie' }, { status: 401 });
+    const token = decodeURIComponent(m[1]);
+    const detail = await validateSessionDetailed(env, token);
+    if (!detail.ok) return okJson({ error: 'unauthorized', reason: detail.reason }, { status: 401 });
+  } else if (!(await requireAuth(request, env))) {
+    return unauthorized();
+  }
   const rec = await env.MAPPINGS.get('CONFIG:ADMIN_PW');
   if (!rec) return okJson({ hasRecord: false });
   try {
@@ -23,7 +32,16 @@ export async function handlePasswordPost(request: Request, env: Env): Promise<Re
   try {
     const url = new URL(request.url);
     const debug = url.searchParams.get('debug') === '1';
-    if (!(await requireAuth(request, env))) return debug ? okJson({ error: 'unauthorized', reason: 'not_authenticated' }, { status: 401 }) : unauthorized();
+    if (debug) {
+      const cookie = request.headers.get('cookie') || '';
+      const m = cookie.match(/(?:^|;\s*)admin_session=([^;]+)/);
+      if (!m) return okJson({ error: 'unauthorized', reason: 'no_cookie' }, { status: 401 });
+      const token = decodeURIComponent(m[1]);
+      const detail = await validateSessionDetailed(env, token);
+      if (!detail.ok) return okJson({ error: 'unauthorized', reason: detail.reason }, { status: 401 });
+    } else if (!(await requireAuth(request, env))) {
+      return unauthorized();
+    }
     const body = await request.json().catch(()=>({}));
     const current = String((body as any).current || '');
     const next = String((body as any).next || '');
