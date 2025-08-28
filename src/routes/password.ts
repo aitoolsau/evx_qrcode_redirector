@@ -8,23 +8,45 @@ import { bumpSessionVersion } from "../services/kv";
 export async function handlePasswordGet(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const debug = url.searchParams.get('debug') === '1';
+  let refreshHeaders: Headers | undefined;
   if (debug) {
     const cookie = request.headers.get('cookie') || '';
     const m = cookie.match(/(?:^|;\s*)admin_session=([^;]+)/);
     if (!m) return okJson({ error: 'unauthorized', reason: 'no_cookie' }, { status: 401 });
     const token = decodeURIComponent(m[1]);
     const detail = await validateSessionDetailed(env, token);
-    if (!detail.ok) return okJson({ error: 'unauthorized', reason: detail.reason }, { status: 401 });
+    if (!detail.ok) {
+      if (detail.reason === 'session_version_mismatch') {
+        // Auto refresh
+        const newToken = await issueSession(env, env.ADMIN_USERNAME || 'admin');
+        refreshHeaders = new Headers({ "Set-Cookie": `admin_session=${newToken}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=3600` });
+      } else {
+        return okJson({ error: 'unauthorized', reason: detail.reason }, { status: 401 });
+      }
+    }
   } else if (!(await requireAuth(request, env))) {
-    return unauthorized();
+    // Possibly version mismatch; attempt silent refresh
+    const cookie = request.headers.get('cookie') || '';
+    const m = cookie.match(/(?:^|;\s*)admin_session=([^;]+)/);
+    if (!m) return unauthorized();
+    const token = decodeURIComponent(m[1]);
+    const detail = await validateSessionDetailed(env, token);
+    if (!detail.ok) {
+      if (detail.reason === 'session_version_mismatch') {
+        const newToken = await issueSession(env, env.ADMIN_USERNAME || 'admin');
+        refreshHeaders = new Headers({ "Set-Cookie": `admin_session=${newToken}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=3600` });
+      } else {
+        return unauthorized();
+      }
+    }
   }
   const rec = await env.MAPPINGS.get('CONFIG:ADMIN_PW');
   if (!rec) return okJson({ hasRecord: false });
   try {
     const cfg = JSON.parse(rec);
-    return okJson({ hasRecord: true, updatedAt: cfg.updatedAt || null, iterations: cfg.iterations || null });
+    return okJson({ hasRecord: true, updatedAt: cfg.updatedAt || null, iterations: cfg.iterations || null, refreshed: !!refreshHeaders }, refreshHeaders ? { headers: refreshHeaders } : undefined);
   } catch {
-    return okJson({ hasRecord: true, parseError: true });
+    return okJson({ hasRecord: true, parseError: true, refreshed: !!refreshHeaders }, refreshHeaders ? { headers: refreshHeaders } : undefined);
   }
 }
 
@@ -39,31 +61,18 @@ export async function handlePasswordPost(request: Request, env: Env): Promise<Re
       if (!m) return okJson({ error: 'unauthorized', reason: 'no_cookie' }, { status: 401 });
       const token = decodeURIComponent(m[1]);
       const detail = await validateSessionDetailed(env, token);
-      if (!detail.ok) {
-        if (detail.reason === 'session_version_mismatch') {
-          staleSession = true; // allow password rotation with stale session
-        } else {
-          return okJson({ error: 'unauthorized', reason: detail.reason }, { status: 401 });
-        }
+      if (!detail.ok && detail.reason !== 'session_version_mismatch') {
+        return okJson({ error: 'unauthorized', reason: detail.reason }, { status: 401 });
       }
-    } else {
-      // Non-debug path: fall back to regular auth; if it fails try to detect mismatch to allow flow
-      if (!(await requireAuth(request, env))) {
-        const cookie = request.headers.get('cookie') || '';
-        const m = cookie.match(/(?:^|;\s*)admin_session=([^;]+)/);
-        if (!m) return unauthorized();
-        const token = decodeURIComponent(m[1]);
-        const detail = await validateSessionDetailed(env, token);
-        if (detail.ok) {
-          // Should not happen (requireAuth said false); safe fail
-          return unauthorized();
-        }
-        if (detail.reason === 'session_version_mismatch') {
-          staleSession = true; // proceed
-        } else {
-          return unauthorized();
-        }
-      }
+      if (detail.reason === 'session_version_mismatch') staleSession = true;
+    } else if (!(await requireAuth(request, env))) {
+      const cookie = request.headers.get('cookie') || '';
+      const m = cookie.match(/(?:^|;\s*)admin_session=([^;]+)/);
+      if (!m) return unauthorized();
+      const token = decodeURIComponent(m[1]);
+      const detail = await validateSessionDetailed(env, token);
+      if (!detail.ok && detail.reason !== 'session_version_mismatch') return unauthorized();
+      if (detail.reason === 'session_version_mismatch') staleSession = true;
     }
     const body = await request.json().catch(()=>({}));
     const current = String((body as any).current || '');
