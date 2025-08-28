@@ -89,7 +89,7 @@ export function adminPage(): string {
   <table id="list"><thead><tr><th>Key</th><th>Value</th><th style="width:160px">Actions</th></tr></thead><tbody></tbody></table>
     </section>
 
-    <section class="card">
+  <section class="card">
       <h2>Change Admin Password</h2>
       <form id="pwform">
         <div class="row"><label for="pw_current">Current Password</label><input id="pw_current" type="password" autocomplete="current-password" required /></div>
@@ -99,7 +99,7 @@ export function adminPage(): string {
         <div id="pw-msg" class="msg"></div>
       </form>
   <div id="pw-meta" class="msg"></div>
-  <div class="msg">Note: Password changes take effect immediately. Your current session remains valid.</div>
+  <div class="msg">Note: Password changes take effect immediately. Your session is refreshed after a successful change.</div>
     </section>
     <section class="card">
       <h2>Import / Export</h2>

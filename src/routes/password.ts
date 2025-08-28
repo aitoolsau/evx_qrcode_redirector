@@ -2,7 +2,7 @@ import { okJson, unauthorized } from "../lib/http";
 import { bytesToB64url } from "../lib/base64";
 import { pbkdf2Hash } from "../lib/crypto";
 import { Env } from "../env";
-import { requireAuth, verifyPassword } from "../services/auth";
+import { requireAuth, verifyPassword, issueSession } from "../services/auth";
 import { bumpSessionVersion } from "../services/kv";
 
 export async function handlePasswordGet(request: Request, env: Env): Promise<Response> {
@@ -35,9 +35,12 @@ export async function handlePasswordPost(request: Request, env: Env): Promise<Re
     const hash = await pbkdf2Hash(next, salt, iterations);
     const rec = { iterations, salt: bytesToB64url(salt), hash: bytesToB64url(hash), updatedAt: new Date().toISOString() };
     await env.MAPPINGS.put('CONFIG:ADMIN_PW', JSON.stringify(rec));
-    await bumpSessionVersion(env); // force re-login everywhere
-    const after = await env.MAPPINGS.get('CONFIG:ADMIN_PW');
-  return okJson({ ok: true, visible: Boolean(after) });
+  await bumpSessionVersion(env); // invalidate old sessions
+  // Immediately issue a fresh session token so current user stays logged in
+  const newToken = await issueSession(env, env.ADMIN_USERNAME || 'admin');
+  const headers = new Headers({ "Set-Cookie": `admin_session=${newToken}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=3600` });
+  const after = await env.MAPPINGS.get('CONFIG:ADMIN_PW');
+	return okJson({ ok: true, visible: Boolean(after), sessionRefreshed: true }, { headers });
   } catch (e: any) {
     const msg = e && (e.message || String(e));
     return okJson({ error: 'internal_error', message: msg }, { status: 500 });
