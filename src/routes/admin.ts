@@ -89,32 +89,32 @@ export function adminPage(): string {
   <table id="list"><thead><tr><th>Key</th><th>Value</th><th style="width:160px">Actions</th></tr></thead><tbody></tbody></table>
     </section>
 
-  <section class="card">
-      <h2>Change Admin Password</h2>
-      <form id="pwform">
-        <div class="row"><label for="pw_current">Current Password</label><input id="pw_current" type="password" autocomplete="current-password" required /></div>
-        <div class="row"><label for="pw_new">New Password</label><input id="pw_new" type="password" autocomplete="new-password" required /></div>
-        <div class="row"><label for="pw_confirm">Confirm New Password</label><input id="pw_confirm" type="password" autocomplete="new-password" required /></div>
-  <button class="btn btn-primary" type="submit">Update Password</button>
-        <div id="pw-msg" class="msg"></div>
-      </form>
-  <div id="pw-meta" class="msg"></div>
-  <div class="msg">Note: Password changes take effect immediately. Your session is refreshed after a successful change.</div>
-    </section>
     <section class="card">
       <h2>Import / Export</h2>
       <div class="row" style="margin-bottom:.5rem">
-  <a id="exportCsv" class="btn btn-secondary" href="/api/mappings?format=csv" download>Export CSV</a>
+        <a id="exportCsv" class="btn btn-secondary" href="/api/mappings?format=csv" download>Export CSV</a>
       </div>
       <form id="importCsvForm">
         <div class="row">
           <label for="importCsv">Import CSV (key,url)</label>
           <input id="importCsv" type="file" accept=".csv,text/csv" />
         </div>
-  <div class="row"><button class="btn btn-danger" type="submit">Import & Replace All</button></div>
+        <div class="row"><button class="btn btn-danger" type="submit">Import & Replace All</button></div>
         <div id="import-msg" class="msg"></div>
       </form>
       <div class="msg">Importing will delete all existing keys and replace them with the uploaded CSV.</div>
+    </section>
+    <section class="card">
+      <h2>Change Admin Password</h2>
+      <form id="pwform">
+        <div class="row"><label for="pw_current">Current Password</label><input id="pw_current" type="password" autocomplete="current-password" required /></div>
+        <div class="row"><label for="pw_new">New Password</label><input id="pw_new" type="password" autocomplete="new-password" required /></div>
+        <div class="row"><label for="pw_confirm">Confirm New Password</label><input id="pw_confirm" type="password" autocomplete="new-password" required /></div>
+        <button class="btn btn-primary" type="submit">Update Password</button>
+        <div id="pw-msg" class="msg"></div>
+      </form>
+      <div id="pw-meta" class="msg"></div>
+      <div class="msg">Note: Password changes take effect immediately. Your session is refreshed after a successful change.</div>
     </section>
     <section class="card" id="health-card">
       <h2>System Health</h2>
