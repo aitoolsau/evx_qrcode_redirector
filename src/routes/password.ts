@@ -6,7 +6,9 @@ import { requireAuth, verifyPassword } from "../services/auth";
 import { bumpSessionVersion } from "../services/kv";
 
 export async function handlePasswordGet(request: Request, env: Env): Promise<Response> {
-  if (!(await requireAuth(request, env))) return unauthorized();
+  const url = new URL(request.url);
+  const debug = url.searchParams.get('debug') === '1';
+  if (!(await requireAuth(request, env))) return debug ? okJson({ error: 'unauthorized', reason: 'not_authenticated' }, { status: 401 }) : unauthorized();
   const rec = await env.MAPPINGS.get('CONFIG:ADMIN_PW');
   if (!rec) return okJson({ hasRecord: false });
   try {
@@ -19,13 +21,15 @@ export async function handlePasswordGet(request: Request, env: Env): Promise<Res
 
 export async function handlePasswordPost(request: Request, env: Env): Promise<Response> {
   try {
-    if (!(await requireAuth(request, env))) return unauthorized();
+    const url = new URL(request.url);
+    const debug = url.searchParams.get('debug') === '1';
+    if (!(await requireAuth(request, env))) return debug ? okJson({ error: 'unauthorized', reason: 'not_authenticated' }, { status: 401 }) : unauthorized();
     const body = await request.json().catch(()=>({}));
     const current = String((body as any).current || '');
     const next = String((body as any).next || '');
     if (next.length < 8) return okJson({ error: 'weak_password' }, { status: 400 });
   const ok = await verifyPassword(env, current);
-  if (!ok) return okJson({ error: 'bad_current' }, { status: 403 });
+	if (!ok) return okJson({ error: 'bad_current', message: debug ? 'current password mismatch' : undefined }, { status: 403 });
     const salt = new Uint8Array(16); crypto.getRandomValues(salt);
     const iterations = 100_000;
     const hash = await pbkdf2Hash(next, salt, iterations);
