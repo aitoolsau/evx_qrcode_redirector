@@ -63,7 +63,7 @@ export async function handleMappings(request: Request, env: Env, url: URL): Prom
     return okJson({ ok: true });
   }
   if (request.method === "POST" && url.searchParams.get("import") === "csv") {
-    // Import CSV: delete all existing mappings, then write new ones
+    // Import CSV: supports optional progress streaming when ?progress=1
     const text = await request.text();
     // Parse CSV: header key,url expected
     const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
@@ -73,7 +73,69 @@ export async function handleMappings(request: Request, env: Env, url: URL): Prom
     const kIdx = cols.findIndex(c => c.toLowerCase() === 'key');
     const vIdx = cols.findIndex(c => c.toLowerCase() === 'url');
     if (kIdx === -1 || vIdx === -1) return okJson({ error: "bad_header" }, { status: 400 });
-    // wipe first
+
+    const total = lines.length;
+    const progressMode = url.searchParams.get('progress') === '1';
+    const reservedPrefixes = ['CONFIG:', 'SESS:'];
+
+    if (progressMode) {
+      // Stream NDJSON progress updates back to client while processing sequentially
+      const { readable, writable } = new TransformStream();
+      (async () => {
+        const writer = writable.getWriter();
+        const enc = new TextEncoder();
+        let count = 0;
+        try {
+          // wipe first (but preserve CONFIG:/SESS: keys via wipeMappings implementation)
+          await wipeMappings(env);
+          for (const line of lines) {
+            // naive CSV parse for quoted fields
+            const parts: string[] = [];
+            let cur = '';
+            let inQ = false;
+            for (let i=0;i<line.length;i++){
+              const ch = line[i];
+              if (inQ) {
+                if (ch === '"') {
+                  if (i+1 < line.length && line[i+1] === '"') { cur += '"'; i++; }
+                  else { inQ = false; }
+                } else cur += ch;
+              } else {
+                if (ch === '"') inQ = true;
+                else if (ch === ',') { parts.push(cur); cur = ''; }
+                else cur += ch;
+              }
+            }
+            parts.push(cur);
+            const rawKey = (parts[kIdx] || '').trim();
+            const rawUrl = (parts[vIdx] || '').trim();
+            if (!rawKey) {
+              // emit progress with same count
+              await writer.write(enc.encode(JSON.stringify({ count, total, pct: Math.round((count/total)*100) }) + '\n'));
+              continue;
+            }
+            try {
+              const u = new URL(rawUrl);
+              if (u.protocol !== 'https:') throw new Error();
+              const up = canonical(rawKey);
+              if (!reservedPrefixes.some(p=>up.startsWith(p))) {
+                await setMapping(env, up, rawUrl);
+                count++;
+              }
+            } catch {}
+            await writer.write(enc.encode(JSON.stringify({ count, total, pct: Math.round((count/total)*100) }) + '\n'));
+          }
+          await writer.write(enc.encode(JSON.stringify({ done: true, count, total, pct: 100 }) + '\n'));
+        } catch (e: any) {
+          await writer.write(enc.encode(JSON.stringify({ error: e && (e.message||String(e)) }) + '\n'));
+        } finally {
+          await writer.close();
+        }
+      })();
+      return new Response(readable, { status: 200, headers: { 'content-type': 'application/x-ndjson' } });
+    }
+
+    // Non-progress mode: existing behavior (wipe then insert)
     await wipeMappings(env);
     let count = 0;
     for (const line of lines) {
@@ -102,10 +164,12 @@ export async function handleMappings(request: Request, env: Env, url: URL): Prom
         const u = new URL(rawUrl);
         if (u.protocol !== 'https:') throw new Error();
       } catch { continue; }
-      await setMapping(env, canonical(rawKey), rawUrl);
+      const up = canonical(rawKey);
+      if (reservedPrefixes.some(p=>up.startsWith(p))) continue;
+      await setMapping(env, up, rawUrl);
       count++;
     }
-    return okJson({ ok: true, imported: count });
+    return okJson({ ok: true, imported: count, total });
   }
   return okJson({ error: "method_not_allowed" }, { status: 405 });
 }

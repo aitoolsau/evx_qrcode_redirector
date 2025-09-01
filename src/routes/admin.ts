@@ -42,10 +42,10 @@ export function adminPage(): string {
   .modal h3{margin:.25rem 0 0.5rem;font-size:18px}
   .modal p{margin:.25rem 0 .75rem;color:#334155}
   .modal .actions{display:flex;justify-content:flex-end;gap:.5rem;margin-top:.5rem}
-  /* Spinner */
-  .spinner{width:28px;height:28px;border:4px solid #e5e7eb;border-top-color:#2271b1;border-radius:50%;animation:spin 0.8s linear infinite;margin:.5rem auto}
-  @keyframes spin{to{transform:rotate(360deg)}}
-  .loading-inline{display:inline-flex;align-items:center;gap:.5rem}
+  /* Progress bar */
+  .progress-wrap{width:100%;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:4px;overflow:hidden;margin:.5rem 0;height:14px;position:relative}
+  .progress-bar{height:100%;width:0;background:#2271b1;transition:width .15s linear}
+  .progress-label{font-size:11px;color:#334155;margin-top:4px;text-align:center}
   </style>
 </head>
 <body>
@@ -131,7 +131,10 @@ export function adminPage(): string {
         <p>This will delete ALL existing mappings and replace them with the CSV you selected.</p>
         <p>A backup CSV will be downloaded first named <code>backup-YYYYMMDD_HHMMSS.csv</code> for rollback.</p>
         <div id="importModalMsg" class="msg"></div>
-  <div id="importSpinner" class="spinner" style="display:none"></div>
+        <div id="importProgress" style="display:none">
+          <div class="progress-wrap"><div class="progress-bar" id="importProgressBar"></div></div>
+          <div class="progress-label" id="importProgressLabel"></div>
+        </div>
         <div class="actions">
           <button id="importCancel" class="btn btn-secondary" type="button">Cancel</button>
           <button id="importConfirm" class="btn btn-danger" type="button">Confirm Import</button>
@@ -257,35 +260,90 @@ export function adminPage(): string {
     document.getElementById('importConfirm').addEventListener('click', async ()=>{
       const modalMsg = document.getElementById('importModalMsg');
       const pageMsg = document.getElementById('import-msg');
-      const spin = document.getElementById('importSpinner');
+      const progWrap = document.getElementById('importProgress');
+      const progBar = document.getElementById('importProgressBar');
+      const progLbl = document.getElementById('importProgressLabel');
       const confirmBtn = document.getElementById('importConfirm');
       const cancelBtn = document.getElementById('importCancel');
-      function startSpin(txt){ modalMsg.textContent = txt; spin.style.display='block'; confirmBtn.disabled=true; cancelBtn.disabled=true; }
-      function stopSpin(){ spin.style.display='none'; confirmBtn.disabled=false; cancelBtn.disabled=false; }
-      startSpin('Creating backup...'); modalMsg.className='msg';
+      function showProgressUI(){ progWrap.style.display='block'; }
+      function hideProgressUI(){ progWrap.style.display='none'; }
+      function setProgress(pct, txt){ progBar.style.width = pct + '%'; progLbl.textContent = txt; }
+      modalMsg.textContent = 'Creating backup...'; modalMsg.className='msg'; hideProgressUI(); confirmBtn.disabled=true; cancelBtn.disabled=true;
       try{
-        await backupCurrent();
+        // Stream backup and count lines while downloading
+        const resp = await fetch('/api/mappings?format=csv', { credentials:'include' });
+        if(!resp.ok) throw new Error('Backup export failed');
+        const reader = resp.body.getReader();
+        const dec = new TextDecoder();
+        let buf = '';
+        let linesDownloaded = 0;
+        const chunks: Uint8Array[] = [];
+        while(true){
+          const { done, value } = await reader.read();
+          if(done) break;
+          chunks.push(value);
+          buf += dec.decode(value, { stream: true });
+          let idx;
+          while((idx = buf.indexOf('\n')) !== -1){
+            buf = buf.slice(idx+1);
+            linesDownloaded++;
+            modalMsg.textContent = 'Backup progress: ' + linesDownloaded + ' lines';
+            modalMsg.className='msg';
+          }
+        }
+        // finalize backup file
+        const blob = new Blob(chunks, { type: 'text/csv' });
+        const filename = 'backup-' + ts() + '.csv';
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href=url; a.download=filename; document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(()=>URL.revokeObjectURL(url), 1000);
       } catch(err){
-        stopSpin();
+        hideProgressUI();
         modalMsg.textContent = 'Backup failed: ' + (err && err.message ? err.message : 'unknown error');
         modalMsg.className='msg err';
+        confirmBtn.disabled=false; cancelBtn.disabled=false;
         return; // Abort import if backup failed
       }
-      startSpin('Importing...');
+      // Begin import with server-side progress streaming
+      modalMsg.textContent = 'Importing...'; showProgressUI();
       try{
-        const res = await api('/api/mappings?import=csv', { method: 'POST', headers: { 'content-type': 'text/csv' }, body: pendingImportCsvText });
-        pageMsg.textContent = 'Imported ' + (res.imported||0) + ' keys';
+        const res = await fetch('/api/mappings?import=csv&progress=1', { method: 'POST', headers: { 'content-type': 'text/csv' }, body: pendingImportCsvText, credentials:'include' });
+        if(!res.ok) throw new Error('Import request failed');
+        const reader = res.body.getReader();
+        const dec = new TextDecoder();
+        let buf = '';
+        let finalCount = 0, total = 0;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+            buf += dec.decode(value, { stream: true });
+            let idx;
+            while ((idx = buf.indexOf('\n')) !== -1) {
+              const line = buf.slice(0, idx).trim();
+              buf = buf.slice(idx + 1);
+              if(!line) continue;
+              try {
+                const obj = JSON.parse(line);
+                if (obj.error) { throw new Error(obj.error); }
+                if (obj.count !== undefined) {
+                  finalCount = obj.count; total = obj.total || total; 
+                  setProgress(obj.pct || 0, obj.count + ' out of ' + (obj.total||'?') + ' records imported.');
+                }
+              } catch(e) {
+                modalMsg.textContent = 'Import parse error';
+              }
+            }
+        }
+        pageMsg.textContent = 'Imported ' + finalCount + ' records';
         pageMsg.className='msg ok';
         closeImportModal();
         pendingImportCsvText = '';
         await loadList();
       } catch(err){
-        stopSpin();
         modalMsg.textContent = (err && err.message) ? err.message : 'Import failed';
         modalMsg.className='msg err';
-        confirmBtn.disabled=false; cancelBtn.disabled=false;
       }
-      stopSpin();
+      hideProgressUI(); confirmBtn.disabled=false; cancelBtn.disabled=false;
     });
 
     document.getElementById('pwform').addEventListener('submit', async (e)=>{
