@@ -93,3 +93,23 @@ export async function batchSetMappings(env: Env, mappings: Array<{ key: string; 
     await Promise.all(chunk.map(({ key, url }) => env.MAPPINGS.put(key, url)));
   }
 }
+
+// Batch get multiple mappings for improved export/backup performance
+export async function batchGetMappings(env: Env, keys: Array<{ name: string }>): Promise<Array<{ key: string; url: string | null }>> {
+  // Process in chunks to avoid overwhelming KV with too many concurrent operations
+  const BATCH_SIZE = 100; // KV reads can handle larger batches than writes
+  const results: Array<{ key: string; url: string | null }> = [];
+  
+  for (let i = 0; i < keys.length; i += BATCH_SIZE) {
+    const chunk = keys.slice(i, i + BATCH_SIZE);
+    const chunkResults = await Promise.all(
+      chunk.map(async (k) => ({
+        key: k.name,
+        url: await env.MAPPINGS.get(k.name)
+      }))
+    );
+    results.push(...chunkResults);
+  }
+  
+  return results;
+}

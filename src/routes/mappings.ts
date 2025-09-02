@@ -1,7 +1,7 @@
 import { okJson, unauthorized } from "../lib/http";
 import { Env } from "../env";
 import { requireAuth } from "../services/auth";
-import { listMappings, getMapping, setMapping, deleteMapping, listAllMappings, wipeMappings, getTotalMappingsCount, batchSetMappings } from "../services/kv";
+import { listMappings, getMapping, setMapping, deleteMapping, listAllMappings, wipeMappings, getTotalMappingsCount, batchSetMappings, batchGetMappings } from "../services/kv";
 
 export async function handleMappings(request: Request, env: Env, url: URL): Promise<Response> {
   if (!(await requireAuth(request, env))) return unauthorized();
@@ -15,21 +15,64 @@ export async function handleMappings(request: Request, env: Env, url: URL): Prom
     }
     // CSV export if format=csv
     if ((url.searchParams.get("format") || "").toLowerCase() === "csv") {
-      const keys = await listAllMappings(env);
-      let csv = "key,url\n";
-      for (const k of keys) {
-        const v = await getMapping(env, k.name);
-        const keyEsc = '"' + k.name.replace(/"/g, '""') + '"';
-        const valEsc = v ? '"' + v.replace(/"/g, '""') + '"' : '""';
-        csv += `${keyEsc},${valEsc}\n`;
-      }
-      return new Response(csv, {
-        status: 200,
-        headers: {
-          "content-type": "text/csv; charset=utf-8",
-          "content-disposition": `attachment; filename=mappings-export.csv`
+      const streamMode = url.searchParams.get("stream") === "1";
+      
+      if (streamMode) {
+        // Streaming export with batch processing for better performance
+        const { readable, writable } = new TransformStream();
+        (async () => {
+          const writer = writable.getWriter();
+          const enc = new TextEncoder();
+          
+          try {
+            // Write CSV header
+            await writer.write(enc.encode("key,url\n"));
+            
+            // Get all keys first
+            const keys = await listAllMappings(env);
+            
+            // Process in batches and stream results
+            const batchResults = await batchGetMappings(env, keys);
+            
+            for (const { key, url } of batchResults) {
+              const keyEsc = '"' + key.replace(/"/g, '""') + '"';
+              const valEsc = url ? '"' + url.replace(/"/g, '""') + '"' : '""';
+              await writer.write(enc.encode(`${keyEsc},${valEsc}\n`));
+            }
+          } catch (error) {
+            console.error('Export error:', error);
+          } finally {
+            await writer.close();
+          }
+        })();
+        
+        return new Response(readable, {
+          status: 200,
+          headers: {
+            "content-type": "text/csv; charset=utf-8",
+            "content-disposition": `attachment; filename=mappings-export.csv`
+          }
+        });
+      } else {
+        // Non-streaming export with batch processing
+        const keys = await listAllMappings(env);
+        const results = await batchGetMappings(env, keys);
+        
+        let csv = "key,url\n";
+        for (const { key, url } of results) {
+          const keyEsc = '"' + key.replace(/"/g, '""') + '"';
+          const valEsc = url ? '"' + url.replace(/"/g, '""') + '"' : '""';
+          csv += `${keyEsc},${valEsc}\n`;
         }
-      });
+        
+        return new Response(csv, {
+          status: 200,
+          headers: {
+            "content-type": "text/csv; charset=utf-8",
+            "content-disposition": `attachment; filename=mappings-export.csv`
+          }
+        });
+      }
     }
     
     // Batch mode - return keys with their URLs in one call
@@ -45,20 +88,15 @@ export async function handleMappings(request: Request, env: Env, url: URL): Prom
         totalCount = await getTotalMappingsCount(env, prefix.toUpperCase());
       }
       
-      // Fetch all URLs in parallel
-      const itemsWithUrls = await Promise.all(
-        list.keys.map(async (key) => {
-          try {
-            const url = await getMapping(env, key.name);
-            return { name: key.name, url: url || '' };
-          } catch (e) {
-            return { name: key.name, url: '' };
-          }
-        })
-      );
+      // Fetch all URLs using batch processing for better performance
+      const itemsWithUrls = await batchGetMappings(env, list.keys);
+      const formattedItems = itemsWithUrls.map(({ key, url }) => ({
+        name: key,
+        url: url || ''
+      }));
       
       return okJson({
-        keys: itemsWithUrls,
+        keys: formattedItems,
         list_complete: list.list_complete,
         cursor: list.cursor,
         total_count: totalCount
