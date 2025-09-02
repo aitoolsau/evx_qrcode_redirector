@@ -82,3 +82,14 @@ export async function wipeMappings(env: Env): Promise<void> {
   const toDelete = page.keys.filter(k => !k.name.startsWith("SESS:") && !k.name.startsWith("CONFIG:"));
   await Promise.all(toDelete.map(k => env.MAPPINGS.delete(k.name)));
 }
+
+// Batch set multiple mappings for improved performance
+export async function batchSetMappings(env: Env, mappings: Array<{ key: string; url: string }>): Promise<void> {
+  // Process in chunks to avoid overwhelming KV with too many concurrent operations
+  const BATCH_SIZE = 50; // Cloudflare KV can handle concurrent operations well
+  
+  for (let i = 0; i < mappings.length; i += BATCH_SIZE) {
+    const chunk = mappings.slice(i, i + BATCH_SIZE);
+    await Promise.all(chunk.map(({ key, url }) => env.MAPPINGS.put(key, url)));
+  }
+}

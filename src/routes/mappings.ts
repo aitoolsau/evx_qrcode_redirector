@@ -1,7 +1,7 @@
 import { okJson, unauthorized } from "../lib/http";
 import { Env } from "../env";
 import { requireAuth } from "../services/auth";
-import { listMappings, getMapping, setMapping, deleteMapping, listAllMappings, wipeMappings, getTotalMappingsCount } from "../services/kv";
+import { listMappings, getMapping, setMapping, deleteMapping, listAllMappings, wipeMappings, getTotalMappingsCount, batchSetMappings } from "../services/kv";
 
 export async function handleMappings(request: Request, env: Env, url: URL): Promise<Response> {
   if (!(await requireAuth(request, env))) return unauthorized();
@@ -114,7 +114,7 @@ export async function handleMappings(request: Request, env: Env, url: URL): Prom
     const reservedPrefixes = ['CONFIG:', 'SESS:'];
 
     if (progressMode) {
-      // Stream NDJSON progress updates back to client while processing sequentially
+      // Stream NDJSON progress updates back to client while processing in batches
       const { readable, writable } = new TransformStream();
       (async () => {
         const writer = writable.getWriter();
@@ -123,6 +123,10 @@ export async function handleMappings(request: Request, env: Env, url: URL): Prom
         try {
           // wipe first (but preserve CONFIG:/SESS: keys via wipeMappings implementation)
           await wipeMappings(env);
+          
+          // Parse and validate all records first, then batch process
+          const validMappings: Array<{ key: string; url: string }> = [];
+          
           for (const line of lines) {
             // naive CSV parse for quoted fields
             const parts: string[] = [];
@@ -144,22 +148,29 @@ export async function handleMappings(request: Request, env: Env, url: URL): Prom
             parts.push(cur);
             const rawKey = (parts[kIdx] || '').trim();
             const rawUrl = (parts[vIdx] || '').trim();
-            if (!rawKey) {
-              // emit progress with same count
-              await writer.write(enc.encode(JSON.stringify({ count, total, pct: Math.round((count/total)*100) }) + '\n'));
-              continue;
-            }
+            if (!rawKey) continue;
+            
             try {
               const u = new URL(rawUrl);
               if (u.protocol !== 'https:') throw new Error();
               const up = canonical(rawKey);
               if (!reservedPrefixes.some(p=>up.startsWith(p))) {
-                await setMapping(env, up, rawUrl);
-                count++;
+                validMappings.push({ key: up, url: rawUrl });
               }
             } catch {}
+          }
+          
+          // Process in batches with progress updates
+          const BATCH_SIZE = 50;
+          for (let i = 0; i < validMappings.length; i += BATCH_SIZE) {
+            const batch = validMappings.slice(i, i + BATCH_SIZE);
+            await batchSetMappings(env, batch);
+            count += batch.length;
+            
+            // Send progress update
             await writer.write(enc.encode(JSON.stringify({ count, total, pct: Math.round((count/total)*100) }) + '\n'));
           }
+          
           await writer.write(enc.encode(JSON.stringify({ done: true, count, total, pct: 100 }) + '\n'));
         } catch (e: any) {
           await writer.write(enc.encode(JSON.stringify({ error: e && (e.message||String(e)) }) + '\n'));
@@ -170,9 +181,12 @@ export async function handleMappings(request: Request, env: Env, url: URL): Prom
       return new Response(readable, { status: 200, headers: { 'content-type': 'application/x-ndjson' } });
     }
 
-    // Non-progress mode: existing behavior (wipe then insert)
+    // Non-progress mode: batch processing for better performance
     await wipeMappings(env);
-    let count = 0;
+    
+    // Parse and validate all records first
+    const validMappings: Array<{ key: string; url: string }> = [];
+    
     for (const line of lines) {
       // naive CSV parse for quoted fields
       const parts: string[] = [];
@@ -201,9 +215,13 @@ export async function handleMappings(request: Request, env: Env, url: URL): Prom
       } catch { continue; }
       const up = canonical(rawKey);
       if (reservedPrefixes.some(p=>up.startsWith(p))) continue;
-      await setMapping(env, up, rawUrl);
-      count++;
+      validMappings.push({ key: up, url: rawUrl });
     }
+    
+    // Batch insert all valid mappings
+    await batchSetMappings(env, validMappings);
+    const count = validMappings.length;
+    
     return okJson({ ok: true, imported: count, total });
   }
   return okJson({ error: "method_not_allowed" }, { status: 405 });
