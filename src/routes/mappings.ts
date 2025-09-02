@@ -1,7 +1,7 @@
 import { okJson, unauthorized } from "../lib/http";
 import { Env } from "../env";
 import { requireAuth } from "../services/auth";
-import { listMappings, getMapping, setMapping, deleteMapping, listAllMappings, wipeMappings } from "../services/kv";
+import { listMappings, getMapping, setMapping, deleteMapping, listAllMappings, wipeMappings, getTotalMappingsCount } from "../services/kv";
 
 export async function handleMappings(request: Request, env: Env, url: URL): Promise<Response> {
   if (!(await requireAuth(request, env))) return unauthorized();
@@ -31,8 +31,43 @@ export async function handleMappings(request: Request, env: Env, url: URL): Prom
         }
       });
     }
+    
+    // Batch mode - return keys with their URLs in one call
+    if (url.searchParams.get("batch") === "true") {
+      const prefix = url.searchParams.get("prefix") || "";
+      const limit = parseInt(url.searchParams.get("limit") || "0", 10) || undefined;
+      const cursor = url.searchParams.get("cursor") || undefined;
+      const list = await listMappings(env, prefix.toUpperCase(), limit, cursor);
+      
+      // Get total count for pagination info (only on first page to avoid performance hit)
+      let totalCount = undefined;
+      if (!cursor) {
+        totalCount = await getTotalMappingsCount(env, prefix.toUpperCase());
+      }
+      
+      // Fetch all URLs in parallel
+      const itemsWithUrls = await Promise.all(
+        list.keys.map(async (key) => {
+          try {
+            const url = await getMapping(env, key.name);
+            return { name: key.name, url: url || '' };
+          } catch (e) {
+            return { name: key.name, url: '' };
+          }
+        })
+      );
+      
+      return okJson({
+        keys: itemsWithUrls,
+        list_complete: list.list_complete,
+        cursor: list.cursor,
+        total_count: totalCount
+      });
+    }
     const prefix = url.searchParams.get("prefix") || "";
-    const list = await listMappings(env, prefix.toUpperCase());
+    const limit = parseInt(url.searchParams.get("limit") || "0", 10) || undefined;
+    const cursor = url.searchParams.get("cursor") || undefined;
+    const list = await listMappings(env, prefix.toUpperCase(), limit, cursor);
     return okJson(list);
   }
   if (request.method === "PUT") {

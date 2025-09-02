@@ -34,10 +34,40 @@ export async function deleteMapping(env: Env, id: string): Promise<void> {
   await env.MAPPINGS.delete(id);
 }
 
-export async function listMappings(env: Env, prefix = "") {
-  const list = await env.MAPPINGS.list({ prefix });
+export async function listMappings(env: Env, prefix = "", limit?: number, cursor?: string) {
+  const options: any = { prefix };
+  if (limit) options.limit = limit;
+  if (cursor) options.cursor = cursor;
+  
+  const list = await env.MAPPINGS.list(options);
   const filtered = list.keys.filter((k: any) => !k.name.startsWith("SESS:") && !k.name.startsWith("CONFIG:"));
-  return { keys: filtered };
+  
+  return { 
+    keys: filtered,
+    list_complete: (list as any).list_complete,
+    cursor: (list as any).cursor
+  };
+}
+
+// Get total count of mappings with prefix
+export async function getTotalMappingsCount(env: Env, prefix = ""): Promise<number> {
+  let count = 0;
+  let cursor: string | undefined = undefined;
+  let hasMore = true;
+  
+  while (hasMore) {
+    const options: any = { prefix, limit: 1000 }; // Use large batch for counting
+    if (cursor) options.cursor = cursor;
+    
+    const list = await env.MAPPINGS.list(options);
+    const filtered = list.keys.filter((k: any) => !k.name.startsWith("SESS:") && !k.name.startsWith("CONFIG:"));
+    count += filtered.length;
+    
+    hasMore = !(list as any).list_complete;
+    cursor = (list as any).cursor;
+  }
+  
+  return count;
 }
 
 // List all non-config/session mapping keys with pagination support

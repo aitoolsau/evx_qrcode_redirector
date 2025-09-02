@@ -35,6 +35,9 @@ export function adminPage(): string {
     .app-wrap{max-width:880px;margin:1rem auto;padding:0 1rem}
     .card{border:1px solid #e5e7eb;border-radius:8px;padding:1rem;margin:1rem 0;background:#fff}
     table{width:100%;border-collapse:collapse}th,td{padding:.5rem;border-bottom:1px solid #f1f5f9}
+    tbody tr{transition:opacity 0.2s ease-in}
+    #pagination{transition:opacity 0.3s ease}
+    .btn:disabled{opacity:0.6;cursor:not-allowed}
     .row{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}
   /* Modal */
   .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;z-index:50}
@@ -88,6 +91,11 @@ export function adminPage(): string {
     <section class="card">
   <div class="row"><input id="prefix" placeholder="Filter by prefix (optional)" /><button id="refresh" class="btn btn-secondary" type="button">Refresh</button></div>
   <table id="list"><thead><tr><th>Key</th><th>Value</th><th style="width:160px">Actions</th></tr></thead><tbody></tbody></table>
+  <div id="pagination" style="margin-top: 15px; text-align: center;">
+    <button id="prevPage" class="btn btn-secondary" disabled>Previous</button>
+    <span id="pageInfo" style="margin: 0 15px;">Page 1 of 1 (0 items)</span>
+    <button id="nextPage" class="btn btn-secondary" disabled>Next</button>
+  </div>
     </section>
 
     <section class="card">
@@ -146,6 +154,13 @@ export function adminPage(): string {
 
   <script>
   let isEditing = false;
+  let currentPage = 1;
+  let currentItems = [];
+  let hasMorePages = true;
+  let currentCursor = null;
+  let pageHistory = []; // Store cursors for previous pages
+  let totalRecords = null; // Total number of records
+  const PAGE_SIZE = 10;
     async function api(path, opts){
       const r = await fetch(path, Object.assign({credentials:'include'}, opts||{}));
       const ct = r.headers.get('content-type')||'';
@@ -186,6 +201,7 @@ export function adminPage(): string {
         document.getElementById('app').style.display='block';
         loadPwMeta().catch(()=>{});
         loadHealth().catch(()=>{});
+        loadList().catch(()=>{}); // Load the KV mappings on initial page load
         return; // Success, exit function
         
       } catch (err) {
@@ -489,47 +505,180 @@ export function adminPage(): string {
     }
     async function loadList(){
       const prefix = document.getElementById('prefix').value.trim();
-      const data = await api('/api/mappings?prefix='+encodeURIComponent(prefix));
+      // Reset pagination when loading new filter
+      currentPage = 1;
+      pageHistory = [];
+      currentCursor = null;
+      totalRecords = null; // Reset total count for new filter
+      await loadPage();
+    }
+    
+    async function loadPage(){
+      const prefix = document.getElementById('prefix').value.trim();
+      let url = '/api/mappings?batch=true&prefix=' + encodeURIComponent(prefix) + '&limit=' + PAGE_SIZE;
+      if (currentCursor) {
+        url += '&cursor=' + encodeURIComponent(currentCursor);
+      }
+      
+      // Show loading state
+      const tbody = document.querySelector('#list tbody');
+      tbody.innerHTML = '<tr><td colspan="3" style="text-align: center; padding: 20px; color: #666;">Loading...</td></tr>';
+      document.getElementById('prevPage').disabled = true;
+      document.getElementById('nextPage').disabled = true;
+      
+      try {
+        const data = await api(url);
+        
+        // Store total count from first page response
+        if (data.total_count !== undefined) {
+          totalRecords = data.total_count;
+        }
+        
+        // Data now comes pre-loaded with URLs - much faster!
+        currentItems = data.keys.filter(item => item.name && item.url);
+        
+        hasMorePages = !data.list_complete;
+        if (data.cursor) {
+          currentCursor = data.cursor;
+        }
+        
+        renderCurrentPage();
+        
+      } catch (error) {
+        tbody.innerHTML = '<tr><td colspan="3" style="text-align: center; padding: 20px; color: #dc3545;">Error loading data. Please try again.</td></tr>';
+        document.getElementById('pageInfo').textContent = 'Error loading page';
+      }
+    }
+    
+    function renderCurrentPage(){
       const tbody = document.querySelector('#list tbody');
       tbody.innerHTML = '';
-      for(const item of data.keys){
-        try {
-          const tr = document.createElement('tr');
-          const val = await api('/api/mappings/'+encodeURIComponent(item.name));
-          tr.innerHTML = '<td><code>'+ item.name +'</code></td>'+
-                         '<td><a href="'+ val.url +'" target="_blank">'+ val.url +'</a></td>'+
-                         '<td>'+
-                           '<button class="btn btn-secondary" data-action="edit" data-k="'+ item.name +'">Edit</button>'+
-                           '<button class="btn btn-danger" data-action="delete" data-k="'+ item.name +'">Delete</button>'+
-                         '</td>';
-          tbody.appendChild(tr);
-        } catch(e){
-          // Key may have been deleted/changed concurrently (e.g., during import). Skip it.
-          continue;
+      
+      // Smoothly render each row
+      currentItems.forEach((item, index) => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = '<td><code>'+ item.name +'</code></td>'+
+                       '<td><a href="'+ item.url +'" target="_blank">'+ item.url +'</a></td>'+
+                       '<td>'+
+                         '<button class="btn btn-secondary" data-action="edit" data-k="'+ item.name +'">Edit</button>'+
+                         '<button class="btn btn-danger" data-action="delete" data-k="'+ item.name +'">Delete</button>'+
+                       '</td>';
+        
+        // Add a subtle fade-in effect for smooth appearance
+        tr.style.opacity = '0';
+        tbody.appendChild(tr);
+        
+        // Stagger the fade-in for a smooth loading effect
+        setTimeout(() => {
+          tr.style.transition = 'opacity 0.2s ease-in';
+          tr.style.opacity = '1';
+        }, index * 20);
+      });
+      
+      // Update pagination info with better messaging
+      const itemCount = currentItems.length;
+      let pageInfo = 'Page ' + currentPage;
+      
+      if (totalRecords !== null) {
+        // Calculate record range for current page
+        const startRecord = (currentPage - 1) * PAGE_SIZE + 1;
+        const endRecord = Math.min(startRecord + itemCount - 1, totalRecords);
+        pageInfo += ' (' + endRecord + ' out of ' + totalRecords + ' records)';
+      } else {
+        // Fallback when total count is not available
+        pageInfo += ' (' + itemCount + ' items';
+        if (hasMorePages) {
+          pageInfo += ', more available';
+        } else if (currentPage > 1) {
+          pageInfo += ', end of results';
         }
+        pageInfo += ')';
       }
-      // Single persistent click handler each time loadList is called (plain JS)
+      
+      document.getElementById('pageInfo').textContent = pageInfo;
+      document.getElementById('prevPage').disabled = currentPage <= 1;
+      document.getElementById('nextPage').disabled = !hasMorePages;
+      
+      // Single persistent click handler
       tbody.onclick = async (e)=>{
         const t = e.target;
         if(t && t.tagName === 'BUTTON'){
           const action = t.getAttribute('data-action');
           const k = t.getAttribute('data-k');
           if(!k) return;
-          if(action === 'delete'){
-            await api('/api/mappings/'+encodeURIComponent(k), {method:'DELETE'});
-            await loadList();
-          } else if(action === 'edit'){
-            const v = await api('/api/mappings/'+encodeURIComponent(k));
-            (document.getElementById('cid')).value = k;
-            (document.getElementById('url')).value = v.url || '';
-            isEditing = true;
-            document.getElementById('save-btn').textContent = 'Update Mapping';
-            document.getElementById('cid').focus();
+          
+          // Disable button during action to prevent double-clicks
+          t.disabled = true;
+          
+          try {
+            if(action === 'delete'){
+              if (confirm('Delete mapping "' + k + '"?')) {
+                await api('/api/mappings/'+encodeURIComponent(k), {method:'DELETE'});
+                await loadList();
+              }
+            } else if(action === 'edit'){
+              const v = await api('/api/mappings/'+encodeURIComponent(k));
+              (document.getElementById('cid')).value = k;
+              (document.getElementById('url')).value = v.url || '';
+              isEditing = true;
+              document.getElementById('save-btn').textContent = 'Update Mapping';
+              document.getElementById('cid').focus();
+            }
+          } catch (error) {
+            alert('Error: ' + (error.message || 'Operation failed'));
+          } finally {
+            t.disabled = false;
           }
         }
       };
     }
     checkAuth();
+    
+    // Setup pagination event handlers
+    document.getElementById('prevPage').onclick = async function(){
+      if(currentPage > 1 && !this.disabled){
+        this.disabled = true;
+        this.textContent = 'Loading...';
+        
+        try {
+          currentPage--;
+          // Restore previous cursor from history
+          if (pageHistory.length > 0) {
+            currentCursor = pageHistory.pop();
+          } else {
+            currentCursor = null;
+          }
+          await loadPage();
+        } catch (error) {
+          alert('Error loading previous page: ' + (error.message || 'Unknown error'));
+          currentPage++; // Revert on error
+        } finally {
+          this.textContent = 'Previous';
+          this.disabled = false;
+        }
+      }
+    };
+    
+    document.getElementById('nextPage').onclick = async function(){
+      if(hasMorePages && !this.disabled){
+        this.disabled = true;
+        this.textContent = 'Loading...';
+        
+        try {
+          // Store current cursor in history for going back
+          pageHistory.push(currentCursor);
+          currentPage++;
+          await loadPage();
+        } catch (error) {
+          alert('Error loading next page: ' + (error.message || 'Unknown error'));
+          currentPage--; // Revert on error
+          pageHistory.pop(); // Remove cursor we just added
+        } finally {
+          this.textContent = 'Next';
+          this.disabled = false;
+        }
+      }
+    };
   </script>
 </body>
 </html>`;
