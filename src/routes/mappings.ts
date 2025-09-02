@@ -138,6 +138,7 @@ export async function handleMappings(request: Request, env: Env, url: URL): Prom
   if (request.method === "POST" && url.searchParams.get("import") === "csv") {
     // Import CSV: supports optional progress streaming when ?progress=1
     const text = await request.text();
+    
     // Parse CSV: header key,url expected
     const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
     if (lines.length === 0) return okJson({ error: "empty_csv" }, { status: 400 });
@@ -184,32 +185,63 @@ export async function handleMappings(request: Request, env: Env, url: URL): Prom
               }
             }
             parts.push(cur);
+            
             const rawKey = (parts[kIdx] || '').trim();
             const rawUrl = (parts[vIdx] || '').trim();
             if (!rawKey) continue;
             
-            try {
-              const u = new URL(rawUrl);
-              if (u.protocol !== 'https:') throw new Error();
-              const up = canonical(rawKey);
-              if (!reservedPrefixes.some(p=>up.startsWith(p))) {
-                validMappings.push({ key: up, url: rawUrl });
+            // Allow empty URLs and validate only non-empty URLs
+            let isValidUrl = true;
+            if (rawUrl && rawUrl.length > 0) {
+              try {
+                const u = new URL(rawUrl);
+                if (u.protocol !== 'https:') {
+                  isValidUrl = false;
+                }
+              } catch {
+                isValidUrl = false;
               }
-            } catch {}
+            }
+            
+            // Store the mapping regardless of URL validity (empty URLs are allowed)
+            const up = canonical(rawKey);
+            if (!reservedPrefixes.some(p=>up.startsWith(p))) {
+              validMappings.push({ key: up, url: rawUrl }); // Store even if URL is empty or invalid
+            }
           }
           
           // Process in batches with progress updates
           const BATCH_SIZE = 50;
+          let totalErrors = 0;
+          const allErrors: string[] = [];
+          
           for (let i = 0; i < validMappings.length; i += BATCH_SIZE) {
             const batch = validMappings.slice(i, i + BATCH_SIZE);
-            await batchSetMappings(env, batch);
-            count += batch.length;
+            const result = await batchSetMappings(env, batch);
+            
+            if (!result.success) {
+              totalErrors += result.errorCount;
+              allErrors.push(...result.errors);
+            }
+            
+            count += result.successCount;
             
             // Send progress update
-            await writer.write(enc.encode(JSON.stringify({ count, total, pct: Math.round((count/total)*100) }) + '\n'));
+            await writer.write(enc.encode(JSON.stringify({ 
+              count, 
+              total, 
+              pct: Math.round((count/total)*100),
+              errors: totalErrors > 0 ? totalErrors : undefined
+            }) + '\n'));
           }
           
-          await writer.write(enc.encode(JSON.stringify({ done: true, count, total, pct: 100 }) + '\n'));
+          await writer.write(enc.encode(JSON.stringify({ 
+            done: true, 
+            count, 
+            total, 
+            pct: 100,
+            errors: totalErrors > 0 ? { count: totalErrors, details: allErrors.slice(0, 5) } : undefined
+          }) + '\n'));
         } catch (e: any) {
           await writer.write(enc.encode(JSON.stringify({ error: e && (e.message||String(e)) }) + '\n'));
         } finally {
@@ -244,23 +276,47 @@ export async function handleMappings(request: Request, env: Env, url: URL): Prom
         }
       }
       parts.push(cur);
+      
       const rawKey = (parts[kIdx] || '').trim();
       const rawUrl = (parts[vIdx] || '').trim();
+      
       if (!rawKey) continue;
-      try {
-        const u = new URL(rawUrl);
-        if (u.protocol !== 'https:') throw new Error();
-      } catch { continue; }
+      
+      // Allow empty URLs and validate only non-empty URLs
+      let isValidUrl = true;
+      if (rawUrl && rawUrl.length > 0) {
+        try {
+          const u = new URL(rawUrl);
+          if (u.protocol !== 'https:') {
+            isValidUrl = false;
+          }
+        } catch {
+          isValidUrl = false;
+        }
+      }
+      
+      // Store the mapping regardless of URL validity (empty URLs are allowed)
       const up = canonical(rawKey);
-      if (reservedPrefixes.some(p=>up.startsWith(p))) continue;
-      validMappings.push({ key: up, url: rawUrl });
+      if (!reservedPrefixes.some(p=>up.startsWith(p))) {
+        validMappings.push({ key: up, url: rawUrl }); // Store even if URL is empty or invalid
+      }
     }
     
     // Batch insert all valid mappings
-    await batchSetMappings(env, validMappings);
-    const count = validMappings.length;
+    const result = await batchSetMappings(env, validMappings);
     
-    return okJson({ ok: true, imported: count, total });
+    if (result.success) {
+      return okJson({ ok: true, imported: result.successCount, failed: result.errorCount, total });
+    } else {
+      return okJson({ 
+        ok: false, 
+        error: 'Import failed',
+        imported: result.successCount,
+        failed: result.errorCount,
+        details: result.errors,
+        total 
+      }, { status: 500 });
+    }
   }
   return okJson({ error: "method_not_allowed" }, { status: 405 });
 }

@@ -84,14 +84,44 @@ export async function wipeMappings(env: Env): Promise<void> {
 }
 
 // Batch set multiple mappings for improved performance
-export async function batchSetMappings(env: Env, mappings: Array<{ key: string; url: string }>): Promise<void> {
+export async function batchSetMappings(
+  env: Env, 
+  mappings: Array<{ key: string; url: string }>
+): Promise<{ success: boolean; successCount: number; errorCount: number; errors: string[] }> {
   // Process in chunks to avoid overwhelming KV with too many concurrent operations
-  const BATCH_SIZE = 50; // Cloudflare KV can handle concurrent operations well
+  const BATCH_SIZE = 10; // Reduced batch size to respect KV limits
+  
+  let successCount = 0;
+  let errorCount = 0;
+  const errors: string[] = [];
   
   for (let i = 0; i < mappings.length; i += BATCH_SIZE) {
     const chunk = mappings.slice(i, i + BATCH_SIZE);
-    await Promise.all(chunk.map(({ key, url }) => env.MAPPINGS.put(key, url)));
+    
+    try {
+      await Promise.all(chunk.map(async ({ key, url }) => {
+        await env.MAPPINGS.put(key, url);
+        return true;
+      }));
+      successCount += chunk.length;
+    } catch (error) {
+      errorCount += chunk.length;
+      const errorMsg = String(error);
+      errors.push(`Chunk ${i / BATCH_SIZE + 1}: ${errorMsg}`);
+      
+      // If we hit KV limits, provide helpful error message
+      if (errorMsg.includes('limit')) {
+        errors.push('KV daily write limit exceeded. Please upgrade to Workers Paid plan or wait until tomorrow.');
+      }
+    }
   }
+  
+  return {
+    success: errorCount === 0,
+    successCount,
+    errorCount,
+    errors
+  };
 }
 
 // Batch get multiple mappings for improved export/backup performance
