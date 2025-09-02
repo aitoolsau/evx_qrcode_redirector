@@ -3,6 +3,7 @@ export interface Env {
   MAPPINGS: KVNamespace;
   ADMIN_USERNAME?: string;
   ADMIN_PASSWORD?: string;
+  ADMIN_PASSWORD_FALLBACK?: string;
   SESSION_SECRET?: string;
   ORIGIN_HOST?: string; // upstream host for unmapped fallback (e.g. evx.au.charge.ampeco.tech)
 }

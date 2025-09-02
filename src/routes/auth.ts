@@ -23,7 +23,7 @@ export async function handleLoginForm(request: Request, env: Env, url: URL): Pro
   const pOk = await mod.verifyPassword(env, pass);
   if (!uOk || !pOk) return html('<script>location.href="/urlmapping?login=failed"</script>', { status: 401 });
   const token = await issueSession(env, user);
-  const headers = new Headers({ "Set-Cookie": `admin_session=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=3600` });
+  const headers = new Headers({ "Set-Cookie": `admin_session=${token}; HttpOnly; Secure; SameSite=None; Path=/; Max-Age=3600` });
   const rd = url.searchParams.get('redirect_to') || '/urlmapping';
   headers.set('Location', rd);
   return new Response(null, { status: 303, headers });
@@ -39,8 +39,9 @@ export async function handleApiLoginJson(request: Request, env: Env): Promise<Re
     const pOk = await mod.verifyPassword(env, String(pass || ""));
     if (!uOk || !pOk) return unauthorized();
     const token = await issueSession(env, user);
-    const headers = new Headers({ "Set-Cookie": `admin_session=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=3600` });
-    return okJson({ ok: true }, { headers });
+    return okJson({ ok: true }, { 
+      headers: { "Set-Cookie": `admin_session=${token}; HttpOnly; Secure; SameSite=None; Path=/; Max-Age=3600` }
+    });
   } catch {
     return okJson({ error: "bad_request" }, { status: 400 });
   }

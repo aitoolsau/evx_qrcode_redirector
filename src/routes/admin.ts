@@ -59,6 +59,7 @@ export function adminPage(): string {
         <label for="pass">Password</label>
         <input id="pass" name="pass" type="password" autocomplete="current-password" required />
   <button class="btn btn-primary" type="submit">Log In</button>
+        <button type="button" onclick="manualLogin()" class="btn btn-secondary" style="margin-top:8px;">Force Login (if form fails)</button>
         <div id="login-msg" class="msg"></div>
       </form>
     </div>
@@ -153,17 +154,116 @@ export function adminPage(): string {
       return body;
     }
     function getParam(name){ const u=new URL(window.location.href); return u.searchParams.get(name); }
-    async function checkAuth(){
-      try { await api('/api/me');
+    async function checkAuth(attempt = 1, maxAttempts = 3){
+      // Debug logging
+      console.debug('checkAuth started (attempt ' + attempt + ' of ' + maxAttempts + ')');
+      console.debug('Current URL:', window.location.href);
+      console.debug('Document cookies:', document.cookie);
+      console.debug('Document referrer:', document.referrer);
+      
+      // Check if we have any admin_session cookie
+      const cookieMatch = document.cookie.match(/admin_session=([^;]+)/);
+      console.debug('Extracted admin_session cookie:', cookieMatch ? cookieMatch[1] : 'NOT FOUND');
+      
+      try { 
+        const resp = await fetch('/api/me', { 
+          credentials: 'include',
+          cache: 'no-cache',  // Ensure we don't get cached responses
+          headers: {
+            'Cache-Control': 'no-cache'
+          }
+        });
+        const respText = await resp.text();
+        console.debug('checkAuth response:', resp.status, respText);
+        
+        if (!resp.ok) {
+          console.debug('Auth failed, status:', resp.status);
+          throw new Error('auth failed - status ' + resp.status);
+        }
+        
+        console.debug('Auth successful! Showing admin interface.');
         document.getElementById('login').style.display='none';
         document.getElementById('app').style.display='block';
-  loadPwMeta().catch(()=>{});
-  loadHealth().catch(()=>{});
-      } catch {
+        loadPwMeta().catch(()=>{});
+        loadHealth().catch(()=>{});
+        return; // Success, exit function
+        
+      } catch (err) {
+        console.debug('checkAuth error:', err);
+        
+        // If we haven't exceeded max attempts, try again with increasing delays
+        if (attempt < maxAttempts) {
+          const delay = attempt * 750; // 750ms, 1500ms delays
+          console.debug('Retrying checkAuth after ' + delay + 'ms... (attempt ' + (attempt + 1) + ')');
+          setTimeout(() => checkAuth(attempt + 1, maxAttempts), delay);
+          return;
+        }
+        
+        console.debug('Max attempts reached, showing login form');
         document.getElementById('login').style.display='block';
         document.getElementById('app').style.display='none';
+        
+        // Check for login failure
+        const loginFailed = getParam('login');
+        const loginMsg = document.getElementById('login-msg');
+        if (loginFailed === 'failed') {
+          loginMsg.textContent = 'Invalid username or password. Please try again.';
+          loginMsg.className = 'msg err';
+          // Clean URL
+          const url = new URL(window.location.href);
+          url.searchParams.delete('login');
+          window.history.replaceState({}, document.title, url.toString());
+        } else if (attempt > 1) {
+          // If we tried multiple times and failed, show a helpful message
+          loginMsg.textContent = 'Session expired or invalid. Please log in again.';
+          loginMsg.className = 'msg err';
+        }
       }
     }
+    
+    // Debug function accessible from browser console
+    window.debugAuth = async function() {
+      console.log('=== Debug Auth Info ===');
+      console.log('Cookies:', document.cookie);
+      console.log('URL:', window.location.href);
+      console.log('Referrer:', document.referrer);
+      try {
+        const debugResp = await fetch('/api/debug', { credentials: 'include' });
+        const debugData = await debugResp.json();
+        console.log('Server sees:', debugData);
+      } catch (e) {
+        console.error('Debug endpoint failed:', e);
+      }
+      try {
+        const meResp = await fetch('/api/me', { credentials: 'include', cache: 'no-cache' });
+        const meText = await meResp.text();
+        console.log('/api/me response:', meResp.status, meText);
+      } catch (e) {
+        console.error('/api/me failed:', e);
+      }
+    };
+    
+    // Simple global login function for testing
+    function manualLogin() {
+      fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user: 'admin', pass: 'dsku59rks8fikri' }),
+        credentials: 'include'
+      }).then(resp => {
+        console.log('Login response:', resp.status);
+        if (resp.ok) {
+          console.log('Login successful, checking auth in 2 seconds...');
+          setTimeout(() => {
+            window.location.reload();
+          }, 2000);
+        }
+      }).catch(e => console.error('Login failed:', e));
+    }
+    
+    // Make it globally accessible
+    window.manualLogin = manualLogin;
+    
     async function loadHealth(){
       const el = document.getElementById('health-status');
       const details = document.getElementById('health-details');
@@ -277,14 +377,14 @@ export function adminPage(): string {
         const dec = new TextDecoder();
         let buf = '';
         let linesDownloaded = 0;
-        const chunks: Uint8Array[] = [];
+        const chunks = [];
         while(true){
           const { done, value } = await reader.read();
           if(done) break;
           chunks.push(value);
           buf += dec.decode(value, { stream: true });
           let idx;
-          while((idx = buf.indexOf('\n')) !== -1){
+          while((idx = buf.indexOf('\\n')) !== -1){
             buf = buf.slice(idx+1);
             linesDownloaded++;
             modalMsg.textContent = 'Backup progress: ' + linesDownloaded + ' lines';
@@ -318,7 +418,7 @@ export function adminPage(): string {
           if (done) break;
             buf += dec.decode(value, { stream: true });
             let idx;
-            while ((idx = buf.indexOf('\n')) !== -1) {
+            while ((idx = buf.indexOf('\\n')) !== -1) {
               const line = buf.slice(0, idx).trim();
               buf = buf.slice(idx + 1);
               if(!line) continue;

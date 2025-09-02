@@ -6,6 +6,7 @@ import { getConfig, bumpSessionVersion, getSessionVersion } from "./kv";
 const ADMIN_PW_KEY = "CONFIG:ADMIN_PW";
 
 export async function verifyPassword(env: Env, pass: string): Promise<boolean> {
+  // First check KV stored password
   const rec = await getConfig(env, ADMIN_PW_KEY);
   if (rec) {
     try {
@@ -15,12 +16,19 @@ export async function verifyPassword(env: Env, pass: string): Promise<boolean> {
       const it = Number(cfg.iterations || 100_000);
       const got = await pbkdf2Hash(pass, salt, it);
       const hashB64 = btoa(String.fromCharCode(...got)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/g,'');
-      return hashB64 === String(cfg.hash || "");
+      if (hashB64 === String(cfg.hash || "")) return true;
     } catch {
-      return false;
+      // Continue to env var fallback
     }
   }
-  return (env.ADMIN_PASSWORD || '') === pass;
+  
+  // Check primary environment password
+  if (env.ADMIN_PASSWORD && env.ADMIN_PASSWORD === pass) return true;
+  
+  // Check fallback environment password
+  if (env.ADMIN_PASSWORD_FALLBACK && env.ADMIN_PASSWORD_FALLBACK === pass) return true;
+  
+  return false;
 }
 
 export async function issueSession(env: Env, user: string): Promise<string> {
@@ -84,7 +92,7 @@ export async function validateSessionDetailed(env: Env, token: string): Promise<
 }
 
 export async function logoutHeaders(): Promise<Headers> {
-  return new Headers({ "Set-Cookie": `admin_session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0` });
+  return new Headers({ "Set-Cookie": `admin_session=; HttpOnly; Secure; SameSite=None; Path=/; Max-Age=0` });
 }
 
 // Convenience guard used by route handlers

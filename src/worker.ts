@@ -34,6 +34,24 @@ export default {
   if (isCpr && url.pathname === "/api/me") {
       return handleApiMe(request, env as any, url);
     }
+  if (isCpr && url.pathname === "/api/debug") {
+      const cookie = request.headers.get('cookie') || '';
+      const userAgent = request.headers.get('user-agent') || '';
+      const referer = request.headers.get('referer') || '';
+      const headerObj: Record<string, string> = {};
+      request.headers.forEach((value, key) => {
+        headerObj[key] = value;
+      });
+      return new Response(JSON.stringify({
+        cookie,
+        userAgent,
+        referer,
+        headers: headerObj,
+        timestamp: new Date().toISOString()
+      }, null, 2), {
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
   if (isCpr && url.pathname === "/api/login" && request.method === "POST") {
       return handleApiLoginJson(request, env as any);
     }
@@ -91,21 +109,33 @@ export default {
 
   const chargerId = m[1].toUpperCase();
 
-    // Prefer explicit mapping from KV; if missing, show message then forward to origin URL
-    const existing = await env.MAPPINGS.get(chargerId);
+    // Prefer explicit mapping from KV; if missing or KV not configured, redirect depending on host.
+    let existing: string | null = null;
+    try {
+      existing = env.MAPPINGS ? await env.MAPPINGS.get(chargerId) : null;
+    } catch (e) {
+      existing = null;
+    }
     if (!existing) {
-      const originHost = env.ORIGIN_HOST || 'evx.au.charge.ampeco.tech';
-      const originUrl = `https://${originHost}/public/cs/${chargerId}`;
-      const body = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="3;url=${originUrl}"><title>Not found</title></head><body style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif; padding:2rem;">
+      if (isCp) {
+        const originHost = env.ORIGIN_HOST || 'evx.au.charge.ampeco.tech';
+        const originUrl = `https://${originHost}/public/cs/${chargerId}`;
+        const body = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="3;url=${originUrl}"><title>Not found</title></head><body style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif; padding:2rem;">
 <p>Charge ID not found in mapping file. Forward to origin URL</p>
 <p><a href="${originUrl}">Continue to ${originUrl}</a> (in 3 seconds)</p>
 </body></html>`;
-      const resp = html(body, { status: 404 });
-      resp.headers.set('X-EVX-Mapping', 'miss');
-      resp.headers.set('X-EVX-Key', chargerId);
-      resp.headers.set('X-EVX-Host', url.hostname);
-      resp.headers.set('X-EVX-Ray', ray);
-      return resp;
+        const resp = html(body, { status: 404 });
+        resp.headers.set('X-EVX-Mapping', 'miss');
+        resp.headers.set('X-EVX-Key', chargerId);
+        resp.headers.set('X-EVX-Host', url.hostname);
+        resp.headers.set('X-EVX-Ray', ray);
+        return resp;
+      }
+      // On cpr host redirect to local QR endpoint with country code when no mapping is available
+      const cc = (env.COUNTRY_CODE || 'AU').toString().toUpperCase();
+      const target = `https://${url.hostname}/public/cs/qr?evseid=${cc}*EVX*${chargerId}`;
+      const redirectHeaders = new Headers({ 'Location': target, 'X-EVX-Mapping': 'miss', 'X-EVX-Key': chargerId, 'X-EVX-Host': url.hostname, 'X-EVX-Ray': ray });
+      return new Response(null, { status: 302, headers: redirectHeaders });
     }
 
       const redirectHeaders = new Headers({
